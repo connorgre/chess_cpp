@@ -3,4 +3,6 @@ target_sources(${Recipe_Name} PUBLIC
     main.cpp
     chess.cpp
     board.cpp
+    board_moveGen.cpp
+    engine.cpp
 )

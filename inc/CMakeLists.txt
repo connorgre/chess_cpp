@@ -4,4 +4,5 @@ target_sources(${Recipe_Name} PUBLIC
     util.h
     bitHelper.h
     chess.h
+    engine.h
 )

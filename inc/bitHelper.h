@@ -22,18 +22,15 @@ static constexpr bool IsIndexOnRightEdge(uint32 idx) { return (idx % 8) == H1; }
 static constexpr bool IsIndexOnLeftEdge(uint32 idx) { return (idx % 8) == A1; }
 
 static constexpr uint64 GetLSB(uint64 pos) { return pos & (~(pos-1)); }
-// Should try to avoid using this, slower than just GetLSB
 static constexpr uint64 GetMSB(uint64 pos)
-{ 
-    uint64 bit = pos;
-    uint64 lsb = GetLSB(bit);
-    // constantly take the LSB off in a loop
-    while (bit != lsb)
-    {
-        bit &= ~lsb;
-        lsb = GetLSB(bit);
-    }
-    return bit;
+{
+    pos |= pos >> 1;
+    pos |= pos >> 2;
+    pos |= pos >> 4;
+    pos |= pos >> 8;
+    pos |= pos >> 16;
+    pos |= pos >> 32;
+    return pos - (pos >> 1);
 }
 
 static constexpr uint32 PopCount(uint64 pos)
@@ -58,6 +55,17 @@ static constexpr uint64 MoveDown(uint64 pos)  { return (pos & ~U64Walls::Bottom)
 static constexpr uint64 MoveLeft(uint64 pos)  { return (pos & ~U64Walls::Left)   >> 1; }
 static constexpr uint64 MoveRight(uint64 pos) { return (pos & ~U64Walls::Right)  << 1; }
 
+static constexpr uint64 MoveUpLeft(uint64 pos)    
+    { return (pos & ~(U64Walls::Top    | U64Walls::Left))  << 7; }
+static constexpr uint64 MoveUpRight(uint64 pos)    
+    { return (pos & ~(U64Walls::Top    | U64Walls::Right)) << 9; }
+static constexpr uint64 MoveDownLeft(uint64 pos)    
+    { return (pos & ~(U64Walls::Bottom | U64Walls::Left))  >> 9; }
+static constexpr uint64 MoveDownRight(uint64 pos)    
+    { return (pos & ~(U64Walls::Bottom | U64Walls::Right)) >> 7; }
+
+
+
 // Moves piece by N, returns 0 for bits that wrap around the board
 static constexpr uint64 MoveLeftByN(uint64 pos, uint32 n)
 {
@@ -76,6 +84,7 @@ static constexpr uint64 MoveRightByN(uint64 pos, uint32 n)
     return pos;
 }
 
+// Pretty slow, should only be used to build the ray table.
 static uint64 GenerateRayInDirection(uint64 pos, Directions direction)
 {
     uint64 ray     = pos;
@@ -91,20 +100,11 @@ static uint64 GenerateRayInDirection(uint64 pos, Directions direction)
         else if (direction == Directions::NorthEast)  ray |= MoveRight(MoveUp(ray));
         else if (direction == Directions::NorthWest)  ray |= MoveLeft(MoveUp(ray));
         else if (direction == Directions::SouthEast)  ray |= MoveRight(MoveDown(ray));
-        else if (direction == Directions::SouthWest)  ray |= MoveLeft(MoveUp(ray));
-        
+        else if (direction == Directions::SouthWest)  ray |= MoveLeft(MoveDown(ray)); 
     }
-
+    ray ^= pos;
     return ray;
 }
-static constexpr uint64 MoveUpLeft(uint64 pos)    
-    { return (pos & ~(U64Walls::Top    | U64Walls::Left))  << 7; }
-static constexpr uint64 MoveUpRight(uint64 pos)    
-    { return (pos & ~(U64Walls::Top    | U64Walls::Right)) << 9; }
-static constexpr uint64 MoveDownLeft(uint64 pos)    
-    { return (pos & ~(U64Walls::Bottom | U64Walls::Left))  >> 9; }
-static constexpr uint64 MoveDownRight(uint64 pos)    
-    { return (pos & ~(U64Walls::Bottom | U64Walls::Right)) >> 7; }
 
 static void GetIndividualBits(uint64 pieces, uint64* pieceList)
 {

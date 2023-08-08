@@ -23,9 +23,21 @@ enum Piece : uint32
     PieceCount = 13,
 };
 
+enum PieceScores : int32
+{
+    KingScore   = 0x0FFF,
+    QueenScore  = 90,
+    RookScore   = 50,
+    BishopScore = 32,
+    KnightScore = 30,
+    PawnScore   = 10,
+
+};
+
 static constexpr uint32 MaxPieces = 32;
 static constexpr uint32 MaxPiecesPerSide = 16;
 static constexpr uint32 MaxPawn = 8;
+static constexpr uint32 MaxMovesPerPosition = 192;  // I think it is technically something like 219
 static constexpr bool IsWhitePiece(Piece piece) { return piece <= Piece::wPawn; }
 static constexpr bool IsBlackPiece(Piece piece) { return !IsWhitePiece(piece); }
 
@@ -81,6 +93,42 @@ struct Move
     Piece  fromPiece;
     Piece  toPiece;
     uint32 flags;
+    int32  score;
+};
+
+struct BoardInfo
+{
+    uint64 blackPieces;
+    uint64 whitePieces;
+    uint64 allPieces;
+    uint32 castleMask;
+
+    uint64 enPassantSquare;
+
+    // Squares that are legal to move to to get out of check.  If we are not in check, this is a
+    // mask of the whole board.
+    uint64 checkMask;
+
+    // pinmask for horizontal/vertical moves.  If a piece is in the pinmask, they can only move to
+    // another piece in the pinmask
+    uint64 hvPinMask;
+
+    // used to help check the legality of en passant moves.  En passant is the only move where 2
+    // pieces can disappear from a rank at the same time, so to ensure legality of en passant, we
+    // need to make sure that our pawn and the enemy pawn don't make up this mask
+    uint64 doubleHorizontalPinMask;
+
+    // pinmask for diagonal moves.
+    uint64 diagPinMask;
+
+    // If the king is checked by a sliding piece, the square behind the king is put into this mask.
+    uint64 illegalKingMoveMask;
+
+    // The number of pieces putting the king in check.  This is used to determine if we are in
+    // check by two pieces at once, in which case we can only move our king
+    uint32 numPiecesChecking;
+
+    uint32 legalCastles;
 };
 
 class Board
@@ -92,7 +140,7 @@ public:
     Result Init();
     Result Destroy();
 
-    void PrintBoard();
+    void PrintBoard(uint64 pieces);
     void ResetBoard();
 
     Piece GetPieceFromPos(uint64 pos);
@@ -100,11 +148,62 @@ public:
     template<bool isWhite>
     void MakeMove(const Move& move);
 
+    void UndoMove(BoardInfo* pBoardInfo, uint64* pPieceData);
+
     bool VerifyBoard();
 
-    uint64 GetEnPassantPos() { return m_enPassantSquare; }
+    uint64 GetEnPassantPos() { return m_boardState.enPassantSquare; }
 
-    void GenerateLegalMoves(Move* moveList, uint32* numMoves);
+    template<bool isWhite>
+    void GenerateCheckAndPinMask();
+
+    // Gets all the legal moves and puts them in a pre-allocated list of moves.  pNumMoves will
+    // have the number of moves in the moveList
+    template<bool isWhite>
+    void GenerateLegalMoves(Move* moveList, uint32* pNumMoves);
+
+    void CopyBoardData(BoardInfo* pBoardInfo) { memcpy(pBoardInfo, &m_boardState, sizeof(BoardInfo)); }
+    void CopyPieceData(uint64* pPieceData) { memcpy(pPieceData, &(m_pieces[0]), sizeof(m_pieces)); }
+
+    template<Piece piece, bool isWhite>
+    inline uint64 GetPieces()
+    {
+        if constexpr (piece == wKing)        { return GetKing<isWhite>();   }
+        else if constexpr (piece == wQueen)  { return GetQueen<isWhite>();  }
+        else if constexpr (piece == wRook)   { return GetRook<isWhite>();   }
+        else if constexpr (piece == wBishop) { return GetBishop<isWhite>(); }
+        else if constexpr (piece == wKnight) { return GetKnight<isWhite>(); }
+        else if constexpr (piece == wPawn)   { return GetPawn<isWhite>();   }
+        else static_assert(false);
+    }
+
+    template<bool isWhite>
+    inline uint64 GetKing()   { if constexpr (isWhite) return WKing();   else return BKing();   }
+    template<bool isWhite>
+    inline uint64 GetQueen()  { if constexpr (isWhite) return WQueen();  else return BQueen();  }
+    template<bool isWhite>
+    inline uint64 GetRook()   { if constexpr (isWhite) return WRook();   else return BRook();   }
+    template<bool isWhite>
+    inline uint64 GetBishop() { if constexpr (isWhite) return WBishop(); else return BBishop(); }
+    template<bool isWhite>
+    inline uint64 GetKnight() { if constexpr (isWhite) return WKnight(); else return BKnight(); }
+    template<bool isWhite>
+    inline uint64 GetPawn()   { if constexpr (isWhite) return WPawn();   else return BPawn();   }
+
+    uint64 GetAllPieces() { return m_boardState.allPieces; }
+
+    uint64 GetBlackPieces() { return m_boardState.blackPieces; }
+    uint64 GetWhitePieces() { return m_boardState.whitePieces; }
+
+    // Function to be used for printing legal moves for a square... Shouldn't use in the engine.
+    uint64 GetLegalMoves(uint64 pos);
+
+    std::string GetStringFromMove(const Move& move);
+
+    void SetBoardFromFEN(std::string fen);
+
+    int32 ScoreBoard();
+
 private:
     template<bool isWhite>
     void MakeNormalMove(const Move& move);
@@ -121,13 +220,16 @@ private:
     template<bool IsWhite>
     void UpdateEnPassantSquare(const Move& move);
 
+    template<bool IsWhite>
+    void UpdateCastleFlags(const Move& move);
+
     inline  uint64 WKing()   { return m_pieces[Piece::wKing];   }
     inline  uint64 WQueen()  { return m_pieces[Piece::wQueen];  }
     inline  uint64 WRook()   { return m_pieces[Piece::wRook];   }
     inline  uint64 WBishop() { return m_pieces[Piece::wBishop]; }
     inline  uint64 WKnight() { return m_pieces[Piece::wKnight]; }
     inline  uint64 WPawn()   { return m_pieces[Piece::wPawn];   }
-    
+
     inline  uint64 BKing()   { return m_pieces[Piece::bKing];   }
     inline  uint64 BQueen()  { return m_pieces[Piece::bQueen];  }
     inline  uint64 BRook()   { return m_pieces[Piece::bRook];   }
@@ -149,22 +251,40 @@ private:
     inline  bool IsBlackKnight(uint64 piece) { return (piece & BKnight()) != 0; }
     inline  bool IsBlackPawn(uint64 piece)   { return (piece & BPawn())   != 0; }
 
-    inline  bool IsBlack(uint64 piece) { return (m_blackPieces & piece) != 0; }
-    inline  bool IsWhite(uint64 piece) { return (m_whitePieces & piece) != 0; }
+    inline  bool IsBlack(uint64 piece) { return (m_boardState.blackPieces & piece) != 0; }
+    inline  bool IsWhite(uint64 piece) { return (m_boardState.whitePieces & piece) != 0; }
 
-    void SetBoardFromFEN(std::string fen);
+    // templated for isWhite, you should know if the piece you're looking for is black or white...
+    template<bool isWhite> Piece GetPieceFromPos(uint64 pos);
+
+    template<Directions dir>
+    uint64 CastRayToBlocker(uint64 pos, uint64 mask);
+
+    template<Directions dir, bool isWhite>
+    void GetCheckmaskAndPinsInDirection(uint64 pos);
 
     void GenerateRayTable();
 
-    uint64 m_pieces[static_cast<uint32>(Piece::PieceCount) + 1];
-    uint64 m_blackPieces;
-    uint64 m_whitePieces;
-    uint64 m_allPieces;
-    uint32 m_castleMask;
+    template<Piece pieceType, bool isWhite, bool hasEnPassant>
+    void GeneratePieceMoves(Move* moveList, uint32* pNumMoves);
 
-    uint64 m_enPassantSquare;
+    template<bool isWhite>
+    uint64 GetPawnKnightKingSeenSquares();
 
+    template<bool isWhite>
+    uint64 GetSliderSeenSquares(uint64 curKingMoves);
+
+    template<bool isWhite, bool hasEnPassant> uint64 GetPawnMoves      (uint64 pos);
+    template<bool isWhite, bool ignoreLegal>  uint64 GetKnightMoves    (uint64 pos);
+    template<bool isWhite, bool ignoreLegal>  uint64 GetRookMoves      (uint64 pos);
+    template<bool isWhite, bool ignoreLegal>  uint64 GetBishopMoves    (uint64 pos);
+    template<bool isWhite, bool ignoreLegal>  uint64 GetQueenMoves     (uint64 pos);
+    template<bool isWhite, bool ignoreLegal>  uint64 GetKingMoves      (uint64 pos);
+
+    template<Piece pieceType, bool isWhite, bool hasEnPassant> uint64 GetPieceMoves(uint64 pos);
+
+    uint64 m_pieces[static_cast<uint32>(Piece::PieceCount)];
     uint64 m_rayTable[Directions::Count][64];
 
-    Turn   m_turn;
+    BoardInfo m_boardState;
 };

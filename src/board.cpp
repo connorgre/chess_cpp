@@ -5,12 +5,8 @@
 Board::Board()
 :
 m_pieces(),
-m_castleMask(0),
-m_turn(Turn::White),
-m_allPieces(0),
-m_whitePieces(0),
-m_blackPieces(0),
-m_enPassantSquare(0)
+m_boardState(),
+m_rayTable()
 {
 
 }
@@ -107,11 +103,17 @@ void Board::SetBoardFromFEN(std::string fenStr)
                     boardIdx -= 16;
                     fenStrIdx++;
                 }
-                fenStrIdx++;
+                if (fenStr[fenStrIdx] != ' ')
+                {
+                    fenStrIdx++;
+                }
                 // don't want to increment boardIdx again
                 continue;
         } // switch (fenStr[fenStrIdx])
-        fenStrIdx++;
+        if (fenStr[fenStrIdx] != ' ')
+        {
+            fenStrIdx++;
+        }
         boardIdx++;
     }
 
@@ -119,34 +121,29 @@ void Board::SetBoardFromFEN(std::string fenStr)
     {
         fenStrIdx++;
     }
-    m_turn = Turn::Black;
-    if (fenStr[fenStrIdx] == 'w')
-    {
-        m_turn = Turn::White;
-    }
 
     fenStrIdx++;
     fenStrIdx++;
 
     // handle castling
-    m_castleMask = 0;
+    m_boardState.castleMask = 0;
     while ((fenStr[fenStrIdx] != ' ') && (fenStr[fenStrIdx] != '-'))
     {
         if (fenStr[fenStrIdx] == 'K')
         {
-            m_castleMask |= MoveFlags::WhiteKingCastle;
+            m_boardState.castleMask |= MoveFlags::WhiteKingCastle;
         }
         else if (fenStr[fenStrIdx] == 'Q')
         {
-            m_castleMask |= MoveFlags::WhiteQueenCastle;
+            m_boardState.castleMask |= MoveFlags::WhiteQueenCastle;
         }
         else if (fenStr[fenStrIdx] == 'k')
         {
-            m_castleMask |= MoveFlags::BlackKingCastle;
+            m_boardState.castleMask |= MoveFlags::BlackKingCastle;
         }
         else if (fenStr[fenStrIdx] == 'q')
         {
-            m_castleMask |= MoveFlags::BlackQueenCastle;
+            m_boardState.castleMask |= MoveFlags::BlackQueenCastle;
         }
         else
         {
@@ -159,21 +156,21 @@ void Board::SetBoardFromFEN(std::string fenStr)
     CH_MESSAGE("Finish En Passant");
 
     // Finish setting up board here
-    m_whitePieces = 0ull;
-    m_blackPieces = 0ull;
+    m_boardState.whitePieces = 0ull;
+    m_boardState.blackPieces = 0ull;
     for (uint32 idx = 0; idx < Piece::PieceCount; idx++)
     {
         if (IsWhitePiece(static_cast<Piece>(idx)))
         {
-            m_whitePieces |= m_pieces[idx];
+            m_boardState.whitePieces |= m_pieces[idx];
         }
         else
         {
             CH_ASSERT(IsBlackPiece(static_cast<Piece>(idx)));
-            m_blackPieces |= m_pieces[idx];
+            m_boardState.blackPieces |= m_pieces[idx];
         }
     }
-    m_allPieces = m_whitePieces | m_blackPieces;
+    m_boardState.allPieces = m_boardState.whitePieces | m_boardState.blackPieces;
 }
 
 void Board::ResetBoard()
@@ -182,7 +179,7 @@ void Board::ResetBoard()
     SetBoardFromFEN(fenStr);
 }
 
-void Board::PrintBoard()
+void Board::PrintBoard(uint64 pieces)
 {
     char pieceBuf[8][8];
     for (uint32 x = 0; x < 8; x++)
@@ -193,8 +190,9 @@ void Board::PrintBoard()
         }
     }
 
-    uint64 pieceList[MaxPieces + 1] = {};
-    GetIndividualBits(m_allPieces, pieceList);
+    // List is of length 1 longer than the most bits in a uint64.
+    uint64 pieceList[65] = {};
+    GetIndividualBits(pieces, pieceList);
     uint32 idx = 0;
     while (pieceList[idx] != 0ull)
     {
@@ -214,14 +212,13 @@ void Board::PrintBoard()
         else if (IsBlackBishop(piece)) pieceBuf[file][rank] = 'b';
         else if (IsBlackKnight(piece)) pieceBuf[file][rank] = 'n';
         else if (IsBlackPawn(piece))   pieceBuf[file][rank] = 'p';
-        else CH_ASSERT(false);
         idx++;
     }
 
-    if (m_enPassantSquare != 0ull)
+    if (m_boardState.enPassantSquare != 0ull)
     {
-        uint32 file = GetFile(m_enPassantSquare);
-        uint32 rank = GetRank(m_enPassantSquare);
+        uint32 file = GetFile(m_boardState.enPassantSquare);
+        uint32 rank = GetRank(m_boardState.enPassantSquare);
 
         pieceBuf[file][rank] = '#';
     }
@@ -326,10 +323,10 @@ bool Board::VerifyBoard()
 {
     uint32 error = 0;
     // white and black can't occupy the same square
-    error |= (m_whitePieces & m_blackPieces) != 0;
+    error |= (m_boardState.whitePieces & m_boardState.blackPieces) != 0;
 
     // white and black need to make up all the pieces
-    error |= (m_whitePieces | m_blackPieces) != m_allPieces;
+    error |= (m_boardState.whitePieces | m_boardState.blackPieces) != m_boardState.allPieces;
 
     // no pieces overlap
     uint64 whiteMask = 0ull;
@@ -358,13 +355,13 @@ bool Board::VerifyBoard()
     error |= PopCount(BKing()) != 1;
 
     // Can't ever have more than 32 pieces
-    error |= PopCount(m_allPieces) > MaxPieces;
-    error |= PopCount(m_whitePieces) > MaxPiecesPerSide;
-    error |= PopCount(m_blackPieces) > MaxPiecesPerSide;
+    error |= PopCount(m_boardState.allPieces) > MaxPieces;
+    error |= PopCount(m_boardState.whitePieces) > MaxPiecesPerSide;
+    error |= PopCount(m_boardState.blackPieces) > MaxPiecesPerSide;
 
     // Make sure we properly reconstructed the board
-    error |= m_whitePieces != whiteMask;
-    error |= m_blackPieces != blackMask;
+    error |= m_boardState.whitePieces != whiteMask;
+    error |= m_boardState.blackPieces != blackMask;
 
     return error != 0;
 }
@@ -426,7 +423,6 @@ void Board::MakeMove(const Move& move)
     {
         CH_ASSERT(false);
     }
-
 #if VERIFY_BOARD
     bool validBoard = VerifyBoard();
     CH_ASSERT(validBoard == true);
@@ -436,36 +432,108 @@ void Board::MakeMove(const Move& move)
 template void Board::MakeMove<true>(const Move& move);
 template void Board::MakeMove<false>(const Move& move);
 
+void Board::UndoMove(BoardInfo* pBoardInfo, uint64* pPieceData)
+{
+    memcpy(&m_boardState, pBoardInfo, sizeof(BoardInfo));
+    memcpy(&(m_pieces[0]), pPieceData, sizeof(m_pieces));
+}
+
+std::string Board::GetStringFromMove(const Move& move)
+{
+    std::string moveStr = "";
+    moveStr += GetRank(move.fromPos) + 'a';
+    moveStr += (7 - GetFile(move.fromPos)) + '1';
+    moveStr += GetRank(move.toPos) + 'a';
+    moveStr += (7 - GetFile(move.toPos)) + '1';
+
+    if ((move.flags & CastleFlags) != 0)
+    {
+        if (move.flags == WhiteKingCastle)
+        {
+            moveStr = "e1g1";
+        }
+        else if (move.flags == WhiteQueenCastle)
+        {
+            moveStr = "e1c1";
+        }
+        else if (move.flags == BlackKingCastle)
+        {
+            moveStr = "e8g8";
+        }
+        else if (move.flags == BlackQueenCastle)
+        {
+            moveStr = "e8c8";
+        }
+        else
+        {
+            moveStr = "CastleFlagError";
+        }
+    }
+
+    return moveStr;
+}
+
 template<bool isWhite>
 void Board::MakeNormalMove(const Move& move)
 {
-    m_enPassantSquare = 0ull;
+    m_boardState.enPassantSquare = 0ull;
     m_pieces[move.fromPiece] ^= (move.toPos | move.fromPos);
     if constexpr (isWhite)
     {
-        m_whitePieces ^= (move.toPos | move.fromPos);
-        m_blackPieces &= ~move.toPos;
-
-        UpdateEnPassantSquare<true>(move);
+        m_boardState.whitePieces ^= (move.toPos | move.fromPos);
+        m_boardState.blackPieces &= ~move.toPos;
     }
     else
     {
-        CH_ASSERT(IsBlackPiece(move.fromPiece));
-        m_blackPieces ^= (move.toPos | move.fromPos);
-        m_whitePieces &= ~move.toPos;
-
-        UpdateEnPassantSquare<false>(move);
+        m_boardState.blackPieces ^= (move.toPos | move.fromPos);
+        m_boardState.whitePieces &= ~move.toPos;
     }
-
+    UpdateEnPassantSquare<isWhite>(move);
+    UpdateCastleFlags<isWhite>(move);
     // the Piece::NoPiece allows this to avoid needing a branch, since
     // it is just writing to a garbage data spot
     m_pieces[move.toPiece] ^= move.toPos;
 
-    m_allPieces = m_whitePieces | m_blackPieces;
+    m_boardState.allPieces = m_boardState.whitePieces | m_boardState.blackPieces;
 }
 
 template void Board::MakeNormalMove<true>(const Move& move);
 template void Board::MakeNormalMove<false>(const Move& move);
+
+template<bool isWhite>
+void Board::UpdateCastleFlags(const Move& move)
+{
+    bool noWhiteKingside  = false;
+    bool noWhiteQueenside = false;
+    bool noBlackKingside  = false;
+    bool noBlackQueenside = false;
+    if constexpr (isWhite)
+    {
+        noWhiteKingside  = (move.fromPos == WhiteKingStart) || (move.fromPos == WhiteKingSideRookStart);
+        noWhiteQueenside = (move.fromPos == WhiteKingStart) || (move.fromPos == WhiteQueenSideRookStart);
+
+        noBlackKingside  = (move.toPos == BlackKingSideRookStart);
+        noBlackQueenside = (move.toPos == BlackQueenSideRookStart);
+    }
+    else
+    {
+        noBlackKingside = (move.fromPos == BlackKingStart) || (move.fromPos == BlackKingSideRookStart);
+        noBlackQueenside = (move.fromPos == BlackKingStart) || (move.fromPos == BlackQueenSideRookStart);
+
+        noWhiteKingside = (move.toPos == WhiteKingSideRookStart);
+        noWhiteQueenside = (move.toPos == WhiteQueenSideRookStart);
+    }
+    uint32 removeCastleFlags = 0;
+    removeCastleFlags |= (noWhiteKingside)  ? WhiteKingCastle  : 0;
+    removeCastleFlags |= (noWhiteQueenside) ? WhiteQueenCastle : 0;
+    removeCastleFlags |= (noBlackKingside)  ? BlackKingCastle  : 0;
+    removeCastleFlags |= (noBlackQueenside) ? BlackQueenCastle : 0;
+
+    m_boardState.castleMask &= ~removeCastleFlags;
+}
+template void Board::UpdateCastleFlags<true>(const Move& move);
+template void Board::UpdateCastleFlags<false>(const Move& move);
+
 
 template<MoveFlags moveFlag>
 void Board::MakeCastleMove()
@@ -495,23 +563,21 @@ void Board::MakeCastleMove()
     m_pieces[kingPiece]  = kingLand;
     m_pieces[rookPiece] ^= (rookStart | rookLand);
 
-    const bool legalCastle = (m_castleMask & moveFlag) != 0;
+    const bool legalCastle = (m_boardState.castleMask & moveFlag) != 0;
     CH_ASSERT(legalCastle);
 
     if constexpr (isWhite)
     {
-        CH_ASSERT(m_turn == Turn::White);
-        m_castleMask &= ~(WhiteKingCastle | WhiteQueenCastle);
-        m_whitePieces ^= (kingStart | kingLand | rookStart | rookLand);
+        m_boardState.castleMask &= ~(WhiteKingCastle | WhiteQueenCastle);
+        m_boardState.whitePieces ^= (kingStart | kingLand | rookStart | rookLand);
     }
     else
     {
-        CH_ASSERT(m_turn == Turn::Black);
-        m_castleMask &= ~(BlackKingCastle | BlackQueenCastle);
-        m_blackPieces ^= (kingStart | kingLand | rookStart | rookLand);
+        m_boardState.castleMask &= ~(BlackKingCastle | BlackQueenCastle);
+        m_boardState.blackPieces ^= (kingStart | kingLand | rookStart | rookLand);
     }
-    m_allPieces ^= (kingStart | kingLand | rookStart | rookLand);
-    m_enPassantSquare = 0ull;
+    m_boardState.allPieces ^= (kingStart | kingLand | rookStart | rookLand);
+    m_boardState.enPassantSquare = 0ull;
 }
 
 template void Board::MakeCastleMove<MoveFlags::WhiteKingCastle> ();
@@ -522,7 +588,7 @@ template void Board::MakeCastleMove<MoveFlags::BlackQueenCastle>();
 template<bool isWhite>
 void Board::MakeEnPassantMove(const Move& move)
 {
-    CH_ASSERT(move.toPos == m_enPassantSquare);
+    CH_ASSERT(move.toPos == m_boardState.enPassantSquare);
     constexpr Piece teamPawn     = (isWhite) ? Piece::wPawn : 
                                                Piece::bPawn;
     constexpr Piece enemyPawn    = (isWhite) ? Piece::bPawn :
@@ -535,16 +601,16 @@ void Board::MakeEnPassantMove(const Move& move)
     if constexpr (isWhite)
     {
 
-        m_whitePieces ^= move.fromPos | move.toPos;
-        m_blackPieces ^= enemySquare;
+        m_boardState.whitePieces ^= move.fromPos | move.toPos;
+        m_boardState.blackPieces ^= enemySquare;
     }
     else
     {
-        m_blackPieces ^= move.fromPos | move.toPos;
-        m_whitePieces ^= enemySquare;
+        m_boardState.blackPieces ^= move.fromPos | move.toPos;
+        m_boardState.whitePieces ^= enemySquare;
     }
-    m_allPieces ^= (move.fromPos | move.toPos | enemySquare);
-    m_enPassantSquare = 0ull;
+    m_boardState.allPieces ^= (move.fromPos | move.toPos | enemySquare);
+    m_boardState.enPassantSquare = 0ull;
 }
 
 template void Board::MakeEnPassantMove<true> (const Move& move);
@@ -558,7 +624,7 @@ void Board::UpdateEnPassantSquare(const Move& move)
         if ((move.fromPiece == Piece::wPawn) &&
             (move.toPos == MoveUp(MoveUp(move.fromPos))))
         { 
-            m_enPassantSquare = MoveUp(move.fromPos);
+            m_boardState.enPassantSquare = MoveUp(move.fromPos);
         }
     }
     else
@@ -566,7 +632,7 @@ void Board::UpdateEnPassantSquare(const Move& move)
         if ((move.fromPiece == Piece::bPawn) &&
             (move.toPos == MoveDown(MoveDown(move.fromPos))))
         {
-            m_enPassantSquare = MoveDown(move.fromPos);
+            m_boardState.enPassantSquare = MoveDown(move.fromPos);
         }
     }
 }
@@ -580,8 +646,8 @@ void Board::MakePromotionMove(const Move& move)
     if constexpr (isWhite)
     {
         m_pieces[Piece::wPawn] ^= move.fromPos;
-        m_whitePieces ^= (move.fromPos | move.toPos);
-        m_blackPieces &= (~move.toPos);
+        m_boardState.whitePieces ^= (move.fromPos | move.toPos);
+        m_boardState.blackPieces &= (~move.toPos);
 
         switch (move.flags)
         {
@@ -604,8 +670,8 @@ void Board::MakePromotionMove(const Move& move)
     else
     {
         m_pieces[Piece::bPawn] ^= move.fromPos;
-        m_blackPieces ^= (move.fromPos | move.toPos);
-        m_whitePieces &= (~move.toPos);
+        m_boardState.blackPieces ^= (move.fromPos | move.toPos);
+        m_boardState.whitePieces &= (~move.toPos);
 
         switch (move.flags)
         {
@@ -625,16 +691,26 @@ void Board::MakePromotionMove(const Move& move)
                 CH_ASSERT(false);
         }
     }
+    UpdateCastleFlags<isWhite>(move);
     m_pieces[move.toPiece] ^= move.toPos;
 
-    m_allPieces = m_whitePieces | m_blackPieces;
-    m_enPassantSquare = 0;
+    m_boardState.allPieces = m_boardState.whitePieces | m_boardState.blackPieces;
+    m_boardState.enPassantSquare = 0;
 }
 
 template void Board::MakePromotionMove<true>(const Move& move);
 template void Board::MakePromotionMove<false>(const Move& move);
 
-void Board::GenerateLegalMoves(Move* moveList, uint32* numMoves)
-{
 
+int32 Board::ScoreBoard()
+{
+    int32 score = 0;
+
+    score += QueenScore  * (PopCount(WQueen())  - PopCount(BQueen()));
+    score += RookScore   * (PopCount(WRook())   - PopCount(BRook()));
+    score += BishopScore * (PopCount(WBishop()) - PopCount(BBishop()));
+    score += KnightScore * (PopCount(WKnight()) - PopCount(BKnight()));
+    score += PawnScore   * (PopCount(WPawn())   - PopCount(BPawn()));
+    
+    return score;
 }

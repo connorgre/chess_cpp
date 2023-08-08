@@ -2,6 +2,7 @@
 
 #include "board.h"
 #include "util.h"
+#include "engine.h"
 #include <map>
 #include <vector>
 
@@ -16,6 +17,8 @@ enum class Commands : uint32
     Print,
     None,
     Undo,
+    Perft,
+    Engine,
 
     NumCommands,
 };
@@ -35,6 +38,24 @@ struct InputCommand
             bool   isWhite;
             Move   boardMove;
         } move;
+
+        struct
+        {
+            uint64 pieces;
+        } print;
+
+        struct
+        {
+            bool isWhite;
+            uint32 depth;
+            bool expanded;
+        } perft;
+
+        struct
+        {
+            bool isWhite;
+            uint32 depth;
+        } engine;
 
         struct
         {
@@ -63,7 +84,28 @@ private:
         InputCommand* pInputCommand
         );
 
+    Result ParsePrintCommand(
+        std::vector<std::string> commandVec,
+        InputCommand* pInputCommand
+    );
+
+    Result ParsePerftCommand(
+        std::vector<std::string> commandVec,
+        InputCommand* pInputCommand
+    );
+
+    Result ParseResetCommand(
+        std::vector<std::string> commandVec,
+        InputCommand* pInputCommand
+    );
+
+    Result ParseEngineCommand(
+        std::vector<std::string> commandVec,
+        InputCommand* pInputCommand
+    );
+
     CommandMap         m_commandMap;
     Board              m_board;
     std::vector<Board> m_historyVec;
+    ChessEngine        m_engine;
 };

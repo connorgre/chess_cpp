@@ -1,6 +1,7 @@
 #include "../inc/board.h"
 #include "../inc/chess.h"
 #include "../inc/bitHelper.h"
+#include "../inc/engine.h"
 #include <sstream>
 #include <vector>
 
@@ -20,6 +21,9 @@ Result ChessGame::Init()
 
     m_historyVec.push_back(m_board);
     GenerateCommandMap();
+
+    m_engine.Init(&m_board);
+
     return Result::ErrorNotImplemented;
 }
 
@@ -38,6 +42,9 @@ void ChessGame::Run()
         std::getline(std::cin, inputLine);
         InputCommand command = ParseInput(inputLine);
 
+        Move moveList[128] = {};
+        uint32 numMoves = 0;
+
         switch(command.command)
         {
             case (Commands::Move):
@@ -51,13 +58,13 @@ void ChessGame::Run()
                 }
                 break;
             case (Commands::Reset):
-                m_board.ResetBoard();
+                m_board.SetBoardFromFEN(command.resetFen.fenStr);
                 break;
             case (Commands::Quit):
                 running = false;
                 break;
             case (Commands::Print):
-                m_board.PrintBoard();
+                m_board.PrintBoard(command.print.pieces);
             case (Commands::None):
                 break;
             case (Commands::Undo):
@@ -70,6 +77,12 @@ void ChessGame::Run()
                 {
                     std::cout << "Nothing to Undo" << std::endl;
                 }
+                break;
+            case (Commands::Perft):
+                m_engine.DoPerft(command.perft.depth, command.perft.isWhite, command.perft.expanded);
+                break;
+            case (Commands::Engine):
+                m_engine.DoEngine(command.engine.depth, command.engine.isWhite);
                 break;
             default:
                 CH_ASSERT(false);
@@ -128,16 +141,22 @@ InputCommand ChessGame::ParseInput(std::string inputStr)
                 result = ParseMoveCommand(inputWords, &inputCommand);
                 break;
             case (Commands::Reset):
-                CH_MESSAGE("Should add extra reset logic later")
+                result = ParseResetCommand(inputWords, &inputCommand);
                 break;
             case (Commands::Quit):
                 break;
             case (Commands::Print):
-                CH_MESSAGE("Should add extra print options")
+                result = ParsePrintCommand(inputWords, &inputCommand);
                 break;
             case (Commands::None):
                 break;
             case (Commands::Undo):
+                break;
+            case (Commands::Perft):
+                result = ParsePerftCommand(inputWords, &inputCommand);
+                break;
+            case (Commands::Engine):
+                result = ParseEngineCommand(inputWords, &inputCommand);
                 break;
             default:
                 CH_ASSERT(false);
@@ -155,13 +174,16 @@ InputCommand ChessGame::ParseInput(std::string inputStr)
 
 void ChessGame::GenerateCommandMap()
 {
-    m_commandMap["move"]  = Commands::Move;
-    m_commandMap["reset"] = Commands::Reset;
-    m_commandMap["quit"]  = Commands::Quit;
-    m_commandMap["exit"]  = Commands::Quit;
-    m_commandMap["print"] = Commands::Print;
-    m_commandMap["none"]  = Commands::None;
-    m_commandMap["undo"]  = Commands::Undo;
+    m_commandMap["move"]   = Commands::Move;
+    m_commandMap["reset"]  = Commands::Reset;
+    m_commandMap["quit"]   = Commands::Quit;
+    m_commandMap["exit"]   = Commands::Quit;
+    m_commandMap["print"]  = Commands::Print;
+    m_commandMap["none"]   = Commands::None;
+    m_commandMap["undo"]   = Commands::Undo;
+    m_commandMap["perft"]  = Commands::Perft;
+    m_commandMap["engine"] = Commands::Engine;
+    m_commandMap["search"] = Commands::Engine;
 }
 
 Result ChessGame::ParseMoveCommand(
@@ -259,5 +281,173 @@ Result ChessGame::ParseMoveCommand(
         result = Result::ErrorInvalidInput;
     }
     CH_ASSERT(result == Result::Success);
+    return result;
+}
+
+Result ChessGame::ParsePrintCommand(
+    std::vector<std::string> wordVec,
+    InputCommand* pInputCommand)
+{
+    uint64 pieces = 0ull;
+    uint32 vecLen = wordVec.size();
+
+    Result result = Result::Success;
+
+    if (vecLen == 1)
+    {
+        pieces = m_board.GetAllPieces();
+    }
+    else if (vecLen == 2)
+    {
+        if (wordVec[1] == "black")
+        {
+            pieces = m_board.GetBlackPieces();
+        }
+        else if (wordVec[1] == "white")
+        {
+            pieces = m_board.GetWhitePieces();
+        }
+        else
+        {
+            result = Result::ErrorInvalidInput;
+        }
+    }
+    else if (vecLen == 3)
+    {
+        if (wordVec[1] == "legal")
+        {
+            std::string pieceStr = wordVec[2];
+            if (pieceStr.length() == 2)
+            {
+                uint32 pieceFile = pieceStr[0] - 'a';
+                uint32 pieceRank = pieceStr[1] - '1';
+                uint32 pieceIdx = pieceFile + pieceRank * 8;
+                uint64 piecePos = 0ull;
+                if (pieceIdx > 63)
+                {
+                    result = Result::ErrorInvalidInput;
+                }
+                else
+                {
+                    piecePos = 1ull << pieceIdx;
+                }
+                pieces = m_board.GetLegalMoves(piecePos);
+            }
+            else
+            {
+                result = Result::ErrorInvalidInput;
+            }
+        }
+        else
+        {
+            result = Result::ErrorInvalidInput;
+        }
+    }
+
+    pInputCommand->print.pieces = pieces;
+    return result;
+}
+
+Result ChessGame::ParsePerftCommand(
+    std::vector<std::string> wordVec,
+    InputCommand* pInputCommand)
+{
+    Result result = Result::Success;
+    // default to perft from white
+    pInputCommand->perft.isWhite = true;
+    pInputCommand->perft.depth = UINT32_MAX;
+    pInputCommand->perft.expanded = false;
+    uint32 size = wordVec.size();
+
+    for (uint32 word = 1; word < size; word++)
+    {
+        if (wordVec[word].length() == 1)
+        {
+            pInputCommand->perft.depth = wordVec[word][0] - '0';
+        }
+        else if (wordVec[word] == "black")
+        {
+            pInputCommand->perft.isWhite = false;
+        }
+        else if (wordVec[word] == "expand")
+        {
+            pInputCommand->perft.expanded = true;
+        }
+        else
+        {
+            result = Result::ErrorInvalidInput;
+        }
+    }
+    if (pInputCommand->perft.depth > 9)
+    {
+        result = Result::ErrorInvalidInput;
+    }
+    return result;
+}
+
+Result ChessGame::ParseEngineCommand(
+    std::vector<std::string> wordVec,
+    InputCommand* pInputCommand)
+{
+    Result result = Result::Success;
+    // default to perft from white
+    pInputCommand->engine.isWhite = true;
+    pInputCommand->engine.depth = UINT32_MAX;
+    uint32 size = wordVec.size();
+
+    for (uint32 word = 1; word < size; word++)
+    {
+        if (wordVec[word].length() == 1)
+        {
+            pInputCommand->engine.depth = wordVec[word][0] - '0';
+        }
+        else if (wordVec[word] == "black")
+        {
+            pInputCommand->engine.isWhite = false;
+        }
+        else
+        {
+            result = Result::ErrorInvalidInput;
+        }
+    }
+    if (pInputCommand->engine.depth > 9)
+    {
+        result = Result::ErrorInvalidInput;
+    }
+    return result;
+}
+
+Result ChessGame::ParseResetCommand(
+    std::vector<std::string> wordVec,
+    InputCommand* pInputCommand)
+{
+    Result result = Result::Success;
+    uint32 vecLen = wordVec.size();
+    if (vecLen == 1)
+    {
+        char fenStr[] = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -";
+        memcpy(pInputCommand->resetFen.fenStr, fenStr, sizeof(fenStr));
+    }
+    else if (vecLen == 2)
+    {
+        if (wordVec[1] == "kiwipete")
+        {
+            char fenStr[] = "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -";
+            memcpy(pInputCommand->resetFen.fenStr, fenStr, sizeof(fenStr));
+        }
+        else if (wordVec[1] == "1")
+        {
+            char fenStr[] = "3qkp/3pp1/6P/7B/8/8/P7/K7 b - -";
+            memcpy(pInputCommand->resetFen.fenStr, fenStr, sizeof(fenStr));
+        }
+        else
+        {
+            result = Result::ErrorInvalidInput;
+        }
+    }
+    else
+    {
+        result = Result::ErrorInvalidInput;
+    }
     return result;
 }

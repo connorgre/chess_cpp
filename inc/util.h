@@ -44,7 +44,7 @@ static void ChPrintMessage(char* msg, char* file, int line)
 #else
 #define CH_ASSERT(_expr)
 #define CH_ALERT(_expr)
-#define CH_TODO(_msg)
+#define CH_MESSAGE(_msg)
 #endif
 
 typedef long                int32;
@@ -55,6 +55,8 @@ typedef unsigned long long  uint64;
 
 typedef char                int8;
 typedef unsigned char       uint8;
+
+static constexpr uint64 FullBoard = UINT64_MAX;
 
 enum class Result : int32
 {
