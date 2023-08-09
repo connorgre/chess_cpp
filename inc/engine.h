@@ -31,6 +31,16 @@ constexpr uint32 QSearchTransTableSize = 999983; // 999983;
 
 constexpr int32 CastleScore = -10;
 
+struct SearchSettings
+{
+    bool  onPv;                     //> Principle Variation doesn't have any pruning
+    bool  allowNullMove;            //> Prune moves where the other team can't improve their score
+                                    //  with a free move
+    bool  aspirationWindow;         //> On iterative deepening, try search with smaller initial
+    int32 aspirationWindowSize;     //  alpha/beta window, retry with full window if we end up
+                                    //  outside window
+};
+
 class ChessEngine
 {
 public:
@@ -53,21 +63,33 @@ public:
     void ResetPerftStats();
 
     template<bool isWhite, bool onPlyZero>
-    int32 Negmax(uint32 depth, uint32 ply, Move* bestMove, int32 alpha, int32 beta);
+    int32 Negmax(uint32 depth, uint32 ply, Move* bestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
 
     template<bool isWhite>
     int32 QuiscenceSearch(uint32 ply, int32 alpha, int32 beta);
 
+    void SetupInitialSearchSettings(SearchSettings *pSearchSettings);
+
 private:
+    
+    template<bool isWhite>
+    Move IterativeDeepening(uint32 depth, SearchSettings searchSettings);
 
     TranspositionTable m_mainSearchTransTable;
     TranspositionTable m_qSearchTransTable;
     Board*  m_pBoard;
     Move*** m_pppMoveLists;
-    uint64  m_positionsSearched;
-    uint64  m_quiscenceSearched;
-    uint64  m_mainTransTableHits;
-    uint64  m_qTransTableHits;
+
+    struct
+    {
+        uint64  positionsSearched;
+        uint64  quiscenceSearched;
+        uint64  mainTransTableHits;
+        uint64  qTransTableHits;
+        uint64  nullMoveCutoffs;
+        uint64  normalSearched;
+    } m_searchValues;;
+    
 
     bool IsMoveGoodForQsearch(const Move& move, bool inCheck);
 

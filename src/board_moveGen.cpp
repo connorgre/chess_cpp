@@ -118,7 +118,7 @@ void Board::GenerateCheckAndPinMask()
     m_boardState.hvPinMask               = 0ull;
     m_boardState.diagPinMask             = 0ull;
     m_boardState.doubleHorizontalPinMask = 0ull;
-    m_boardState.kingXRayMoveMask     = 0ull;
+    m_boardState.kingXRayMoveMask        = 0ull;
     m_boardState.numPiecesChecking       = 0ull;
     m_boardState.legalCastles            = 0ull;
 

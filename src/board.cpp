@@ -514,6 +514,29 @@ std::string Board::GetStringFromMove(const Move& move)
 }
 
 template<bool isWhite>
+void Board::MakeNullMove()
+{
+    // Switch the team.
+    m_boardState.zobristKey ^= m_ppZobristArray[0][65];
+    m_boardState.isWhiteTurn = !m_boardState.isWhiteTurn;
+
+    // These aren't valid anymore
+    m_boardState.checkAndPinMasksValid = false;
+    m_boardState.illegalKingMoveMask = false;
+
+    // Take out EP zobrist
+    if (m_boardState.enPassantSquare != 0ull)
+    {
+        uint32 epIdx = GetIndex(m_boardState.enPassantSquare);
+        m_boardState.zobristKey ^= m_ppZobristArray[Piece::NoPiece][epIdx];
+    }
+    m_boardState.enPassantSquare = 0ull;
+}
+
+template void Board::MakeNullMove<true>();
+template void Board::MakeNullMove<false>();
+
+template<bool isWhite>
 void Board::MakeNormalMove(const Move& move)
 {
     m_boardState.enPassantSquare = 0ull;

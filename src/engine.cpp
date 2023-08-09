@@ -7,10 +7,7 @@ ChessEngine::ChessEngine()
 :
 m_pBoard(nullptr),
 m_pppMoveLists(nullptr),
-m_positionsSearched(0),
-m_quiscenceSearched(0),
-m_mainTransTableHits(0), 
-m_qTransTableHits(0)
+m_searchValues({})
 {
 
 }
@@ -53,19 +50,27 @@ void ChessEngine::Destroy()
     m_qSearchTransTable.Destroy();
 }
 
+void ChessEngine::SetupInitialSearchSettings(SearchSettings* pSettings)
+{
+    pSettings->onPv                 = true;
+    pSettings->allowNullMove        = true;
+    pSettings->aspirationWindow     = false;
+    pSettings->aspirationWindowSize = PieceScores::PawnScore;
+}
+
 void ChessEngine::DoEngine(uint32 depth, bool isWhite, bool doMove)
 {
-    m_positionsSearched  = 0ull;
-    m_quiscenceSearched  = 0ull;
-    m_mainTransTableHits = 0ull;
-    m_qTransTableHits    = 0ull;
+    m_searchValues = {};
+
     Move bestMove = {};
-    int32 bestScore = 0;
     auto startTime = std::chrono::steady_clock::now();
+
+    SearchSettings settings = {};
+    SetupInitialSearchSettings(&settings);
 
     if (isWhite)
     {
-        bestScore = Negmax<true, true>(depth, 0, &bestMove, InitialAlpha, InitialBeta);
+        bestMove = IterativeDeepening<true>(depth, settings);
         if (doMove)
         {
             m_pBoard->MakeMove<true>(bestMove);
@@ -73,14 +78,13 @@ void ChessEngine::DoEngine(uint32 depth, bool isWhite, bool doMove)
     }
     else
     {
-        bestScore = Negmax<false, true>(depth, 0, &bestMove, InitialAlpha, InitialBeta);
+        bestMove = IterativeDeepening<false>(depth, settings);
         if (doMove)
         {
             m_pBoard->MakeMove<false>(bestMove);
         }
         // Need to invert the score since black will return the hightest value because of negmax,
         // however outside negmax, negative score is better for black.
-        bestScore      *= -1;
         bestMove.score *= -1;
     }
 
@@ -90,29 +94,30 @@ void ChessEngine::DoEngine(uint32 depth, bool isWhite, bool doMove)
     uint32 knps = 0;
     if (totalTime.count() > 0)
     {
-        knps = m_positionsSearched / totalTime.count();
+        knps = m_searchValues.positionsSearched / totalTime.count();
     }
 
     std::string bestMoveStr = m_pBoard->GetStringFromMove(bestMove);
-    CH_ASSERT(bestScore == bestMove.score);
 
-    std::string scoreStr = ConvertScoreToStr(bestScore);
+    std::string scoreStr = ConvertScoreToStr(bestMove.score);
 
     std::cout << "Best Move         : " << bestMoveStr << std::endl;
     std::cout << "Score             : " << scoreStr << std::endl;
 
     std::cout << "Time              : " << totalTime.count() << " ms" << std::endl;
-    std::cout << "Positions searched: " << m_positionsSearched << std::endl;
+    std::cout << "Positions searched: " << m_searchValues.positionsSearched << std::endl;
     std::cout << "Knps              : " << knps << std::endl;
 
-    std::cout << "Quiscence searched: " << m_quiscenceSearched << std::endl;
-    std::cout << "TransTable hits   : " << m_mainTransTableHits << std::endl;
-    std::cout << "QSearch TT hits   : " << m_qTransTableHits << std::endl;
+    std::cout << "Normal Searched   : " << m_searchValues.normalSearched << std::endl;
+    std::cout << "Quiscence searched: " << m_searchValues.quiscenceSearched << std::endl;
+    std::cout << "TransTable hits   : " << m_searchValues.mainTransTableHits << std::endl;
+    std::cout << "QSearch TT hits   : " << m_searchValues.qTransTableHits << std::endl;
+    std::cout << "Null Move Cutoffs : " << m_searchValues.nullMoveCutoffs << std::endl;
 }
 
 void ChessEngine::DoPerft(uint32 depth, bool isWhite, bool expanded)
 {
-    m_positionsSearched = 0ull;
+    m_searchValues.positionsSearched = 0ull;
     auto startTime = std::chrono::steady_clock::now();
 
     if (expanded)
@@ -144,11 +149,11 @@ void ChessEngine::DoPerft(uint32 depth, bool isWhite, bool expanded)
     uint32 knps = 0;
     if (totalTime.count() > 0)
     {
-        knps = m_positionsSearched / totalTime.count();
+        knps = m_searchValues.positionsSearched / totalTime.count();
     }
 
     std::cout << "Time              : " << totalTime.count() << " ms" << std::endl;
-    std::cout << "Positions searched: " << m_positionsSearched << std::endl;
+    std::cout << "Positions searched: " << m_searchValues.positionsSearched << std::endl;
     std::cout << "Knps              : " << knps << std::endl;
 }
 
@@ -170,7 +175,7 @@ uint32 ChessEngine::Perft(uint32 depth, uint32 ply)
     // We've generated the moves all the moves for the last layer already, no reason to actually count them.
     if (depth <= 1)
     {
-        m_positionsSearched += numMoves;
+        m_searchValues.positionsSearched += numMoves;
         return 0;
     }
 
@@ -241,14 +246,14 @@ void ChessEngine::PerftExpanded(uint32 depth)
             std::cout << std::endl;
         }
         prevMoveStr = moveStr;
-        std::cout << moveStr << ": " << m_positionsSearched - prevNumMoves << std::endl;
-        prevNumMoves = m_positionsSearched;
+        std::cout << moveStr << ": " << m_searchValues.positionsSearched - prevNumMoves << std::endl;
+        prevNumMoves = m_searchValues.positionsSearched;
     }
 }
 
 void ChessEngine::ResetPerftStats()
 {
-    m_positionsSearched = 0;
+    m_searchValues.positionsSearched = 0;
 }
 
 template uint32 ChessEngine::Perft<true>(uint32 depth, uint32 ply);
@@ -256,10 +261,45 @@ template uint32 ChessEngine::Perft<false>(uint32 depth, uint32 ply);
 template void ChessEngine::PerftExpanded<true>(uint32 depth);
 template void ChessEngine::PerftExpanded<false>(uint32 depth);
 
-template<bool isWhite, bool onPlyZero>
-int32 ChessEngine::Negmax(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta)
+template<bool isWhite>
+Move ChessEngine::IterativeDeepening(uint32 depth, SearchSettings settings)
 {
-    m_positionsSearched++;
+    int32 alpha = InitialAlpha;
+    int32 beta  = InitialBeta;
+    Move  bestMove = {};
+
+    uint32 initialDepth = (depth < 4) ? depth : 4;
+    int32 score = Negmax<isWhite, true>(initialDepth, 0, &bestMove, alpha, beta, settings);
+
+    for (uint32 searchDepth = initialDepth + 1; searchDepth < depth; searchDepth++)
+    {
+        if (settings.aspirationWindow)
+        {
+            alpha = score - settings.aspirationWindowSize;
+            beta  = score + settings.aspirationWindowSize;
+        }
+
+        score = Negmax<isWhite, true>(searchDepth, 0, &bestMove, alpha, beta, settings);
+
+        if ((settings.aspirationWindow) && ((score <= alpha) || (score >= beta)))
+        {
+            std::cout << "did full window search" << std::endl;
+            score = Negmax<isWhite, true>(searchDepth, 0, &bestMove, InitialAlpha, InitialBeta, settings);
+        }
+    }
+    return bestMove;
+}
+
+template<bool isWhite, bool onPlyZero>
+int32 ChessEngine::Negmax(
+    uint32         depth, 
+    uint32         ply, 
+    Move*          pBestMove, 
+    int32          alpha, 
+    int32          beta, 
+    SearchSettings searchSettings)
+{
+    m_searchValues.positionsSearched++;
     constexpr int32 scoreMultiplier = (isWhite) ? 1 : -1;
     if constexpr (onPlyZero)
     {
@@ -273,6 +313,11 @@ int32 ChessEngine::Negmax(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha
         //score *= scoreMultiplier;
         return score;
     }
+    m_searchValues.normalSearched++;
+
+    // This will allow us to know if we are in check ahead of time
+    m_pBoard->GenerateCheckAndPinMask<isWhite>();
+    bool inCheck = m_pBoard->InCheck();
 
     TTScoreType ttScoreType = TTScoreType::LowerBound;
     bool ttMoveValid = false;
@@ -291,8 +336,31 @@ int32 ChessEngine::Negmax(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha
         {
             *pBestMove = ttMove;
         }
-        m_mainTransTableHits++;
+        m_searchValues.mainTransTableHits++;
         return ttMove.score;
+    }
+
+    BoardInfo prevBoardData = {};
+    uint64 prevBoardPieces[static_cast<uint32>(Piece::PieceCount)];
+    m_pBoard->CopyBoardData(&prevBoardData);
+    m_pBoard->CopyPieceData(&(prevBoardPieces[0]));
+
+    // If we can do a NullMoveSearch
+    if ((searchSettings.allowNullMove) && (searchSettings.onPv == false) && (depth > 4) && (inCheck == false))
+    {
+        int32 nullMoveScore = 0;
+        searchSettings.allowNullMove = false;
+        m_pBoard->MakeNullMove<isWhite>();
+        nullMoveScore = Negmax<isWhite, false>(depth - 3, ply + 1, nullptr, 0 - beta, 1 - beta, searchSettings);
+        m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
+
+        if (nullMoveScore >= beta)
+        {
+            m_searchValues.nullMoveCutoffs++;
+            return beta;
+        }
+
+        searchSettings.allowNullMove = true;
     }
 
     Move* pCaptureList = &(m_pppMoveLists[ply][MoveTypes::Attack][0]);
@@ -321,11 +389,6 @@ int32 ChessEngine::Negmax(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha
     Move* pMoveList = pCaptureList;
     uint32 idxSubtractVal = 0;
 
-    BoardInfo prevBoardData = {};
-    uint64 prevBoardPieces[static_cast<uint32>(Piece::PieceCount)];
-    m_pBoard->CopyBoardData(&prevBoardData);
-    m_pBoard->CopyPieceData(&(prevBoardPieces[0]));
-
     int32 bestScore = NegCheckMateScore + ply;
 
     Move bestMove = pCaptureList[0];
@@ -340,7 +403,7 @@ int32 ChessEngine::Negmax(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha
         const Move move = pMoveList[moveIdx - idxSubtractVal];
         m_pBoard->MakeMove<isWhite>(move);
 
-        int32 moveScore = Negmax<!isWhite, false>(depth - 1, ply + 1, nullptr, beta * -1, alpha * -1);
+        int32 moveScore = Negmax<!isWhite, false>(depth - 1, ply + 1, nullptr, beta * -1, alpha * -1, searchSettings);
         // Flip the sign since this is negmax
         moveScore *= -1;
 
@@ -352,6 +415,8 @@ int32 ChessEngine::Negmax(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha
         }
 
         m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
+
+        searchSettings.onPv = false;
 
         if (bestScore > alpha)
         {
@@ -376,18 +441,20 @@ int32 ChessEngine::Negmax(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha
     return bestScore;
 }
 
-template int32 ChessEngine::Negmax<true, true>(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta);
-template int32 ChessEngine::Negmax<true, false>(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta);
-template int32 ChessEngine::Negmax<false, true>(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta);
-template int32 ChessEngine::Negmax<false, false>(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta);
+template int32 ChessEngine::Negmax<true, true>  (uint32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
+template int32 ChessEngine::Negmax<true, false> (uint32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
+template int32 ChessEngine::Negmax<false, true> (uint32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
+template int32 ChessEngine::Negmax<false, false>(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
 
 template<bool isWhite>
 int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
 {
+    m_searchValues.positionsSearched++;
+    m_searchValues.quiscenceSearched++;
+
     constexpr int32 scoreMultiplier = (isWhite) ? 1 : -1;
     int32 standPatScore = m_pBoard->ScoreBoard();
     standPatScore *= scoreMultiplier;
-    standPatScore -= ply;
 
     if (ply == MaxEngineDepth)
     {
@@ -405,7 +472,8 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
     {
         return alpha;
     }
-    m_quiscenceSearched++;
+
+    m_pBoard->GenerateCheckAndPinMask<isWhite>();
 
     TTScoreType ttScoreType = TTScoreType::LowerBound;
     Move ttMove = m_qSearchTransTable.ProbeTable(m_pBoard->GetZobKey(), 0, alpha, beta);
@@ -418,7 +486,7 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
     // TT table hit.
     if ((ttMove.score != InvalidScore) && ttMoveValid)
     {
-        m_qTransTableHits++;
+        m_searchValues.qTransTableHits++;
         return ttMove.score;
     }
 

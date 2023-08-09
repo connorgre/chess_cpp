@@ -168,6 +168,9 @@ public:
     template<bool isWhite>
     void MakeMove(const Move& move);
 
+    template<bool isWhite>
+    void MakeNullMove();
+
     void UndoMove(BoardInfo* pBoardInfo, uint64* pPieceData);
 
     bool VerifyBoard();

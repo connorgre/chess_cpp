@@ -387,6 +387,18 @@ Result ChessGame::ParsePerftCommand(
     return result;
 }
 
+bool IsInteger(std::string str)
+{
+    for (char c : str)
+    {
+        if (std::isdigit(c) == false)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 Result ChessGame::ParseEngineCommand(
     std::vector<std::string> wordVec,
     InputCommand* pInputCommand)
@@ -400,9 +412,9 @@ Result ChessGame::ParseEngineCommand(
 
     for (uint32 word = 1; word < size; word++)
     {
-        if (wordVec[word].length() == 1)
+        if (IsInteger(wordVec[word]))
         {
-            pInputCommand->engine.depth = wordVec[word][0] - '0';
+            pInputCommand->engine.depth = std::stoi(wordVec[word]);
         }
         else if (wordVec[word] == "black")
         {
@@ -423,7 +435,7 @@ Result ChessGame::ParseEngineCommand(
             result = Result::ErrorInvalidInput;
         }
     }
-    if (pInputCommand->engine.depth > 9)
+    if (pInputCommand->engine.depth > MaxEngineDepth)
     {
         result = Result::ErrorInvalidInput;
     }
