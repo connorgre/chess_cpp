@@ -34,6 +34,14 @@ enum PieceScores : int32
 
 };
 
+enum MoveTypes : uint32
+{
+    Attack = 0,
+    Normal = 1,
+
+    MoveTypeCount,
+};
+
 static constexpr uint32 MaxPieces = 32;
 static constexpr uint32 MaxPiecesPerSide = 16;
 static constexpr uint32 MaxPawn = 8;
@@ -159,8 +167,8 @@ public:
 
     // Gets all the legal moves and puts them in a pre-allocated list of moves.  pNumMoves will
     // have the number of moves in the moveList
-    template<bool isWhite>
-    void GenerateLegalMoves(Move* moveList, uint32* pNumMoves);
+    template<bool isWhite, bool onlyCaptures>
+    void GenerateLegalMoves(Move* pCaptureList, Move* pNormalList, uint32* pNumCapture, uint32* pNumNormal);
 
     void CopyBoardData(BoardInfo* pBoardInfo) { memcpy(pBoardInfo, &m_boardState, sizeof(BoardInfo)); }
     void CopyPieceData(uint64* pPieceData) { memcpy(pPieceData, &(m_pieces[0]), sizeof(m_pieces)); }
@@ -203,6 +211,9 @@ public:
     void SetBoardFromFEN(std::string fen);
 
     int32 ScoreBoard();
+
+    // Assumes the checkmask has been set already.
+    bool InCheck() { return m_boardState.numPiecesChecking != 0; }
 
 private:
     template<bool isWhite>
@@ -265,8 +276,8 @@ private:
 
     void GenerateRayTable();
 
-    template<Piece pieceType, bool isWhite, bool hasEnPassant>
-    void GeneratePieceMoves(Move* moveList, uint32* pNumMoves);
+    template<Piece pieceType, bool isWhite, bool hasEnPassant, bool onlyCaptures>
+    void GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pNumCapture, uint32* pNumNormal);
 
     template<bool isWhite>
     uint64 GetPawnKnightKingSeenSquares();

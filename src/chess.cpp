@@ -82,7 +82,7 @@ void ChessGame::Run()
                 m_engine.DoPerft(command.perft.depth, command.perft.isWhite, command.perft.expanded);
                 break;
             case (Commands::Engine):
-                m_engine.DoEngine(command.engine.depth, command.engine.isWhite);
+                m_engine.DoEngine(command.engine.depth, command.engine.isWhite, command.engine.doMove);
                 break;
             default:
                 CH_ASSERT(false);
@@ -167,7 +167,6 @@ InputCommand ChessGame::ParseInput(std::string inputStr)
     if (result != Result::Success)
     {
         inputCommand.command = Commands::None;
-        CH_ASSERT(false);
     }
     return inputCommand;
 }
@@ -390,9 +389,10 @@ Result ChessGame::ParseEngineCommand(
     InputCommand* pInputCommand)
 {
     Result result = Result::Success;
-    // default to perft from white
+    bool colorSpecified = false;;
     pInputCommand->engine.isWhite = true;
     pInputCommand->engine.depth = UINT32_MAX;
+    pInputCommand->engine.doMove = false;
     uint32 size = wordVec.size();
 
     for (uint32 word = 1; word < size; word++)
@@ -403,7 +403,17 @@ Result ChessGame::ParseEngineCommand(
         }
         else if (wordVec[word] == "black")
         {
+            colorSpecified = true;
             pInputCommand->engine.isWhite = false;
+        }
+        else if (wordVec[word] == "white")
+        {
+            colorSpecified = true;
+            pInputCommand->engine.isWhite = true;
+        }
+        else if (wordVec[word] == "move")
+        {
+            pInputCommand->engine.doMove = true;
         }
         else
         {
@@ -411,6 +421,11 @@ Result ChessGame::ParseEngineCommand(
         }
     }
     if (pInputCommand->engine.depth > 9)
+    {
+        result = Result::ErrorInvalidInput;
+    }
+
+    if (colorSpecified == false)
     {
         result = Result::ErrorInvalidInput;
     }
@@ -437,7 +452,7 @@ Result ChessGame::ParseResetCommand(
         }
         else if (wordVec[1] == "1")
         {
-            char fenStr[] = "3qkp/3pp1/6P/7B/8/8/P7/K7 b - -";
+            char fenStr[] = "3qkr/3pp1/6P/7B/8/8/P7/K7 b - -";
             memcpy(pInputCommand->resetFen.fenStr, fenStr, sizeof(fenStr));
         }
         else
