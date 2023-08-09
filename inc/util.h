@@ -50,11 +50,15 @@ static void ChPrintMessage(char* msg, char* file, int line)
 typedef long                int32;
 typedef long long           int64;
 
+typedef short               int16;
+
 typedef unsigned long       uint32;
 typedef unsigned long long  uint64;
 
 typedef char                int8;
 typedef unsigned char       uint8;
+
+
 
 static constexpr uint64 FullBoard = UINT64_MAX;
 

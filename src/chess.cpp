@@ -29,6 +29,8 @@ Result ChessGame::Init()
 
 Result ChessGame::Destroy()
 {
+    m_board.Destroy();
+    m_engine.Destroy();
     return Result::ErrorNotImplemented;
 }
 
@@ -91,6 +93,7 @@ void ChessGame::Run()
         {
             m_historyVec.push_back(m_board);
         }
+        std::cout << std::flush;
     }
 }
 

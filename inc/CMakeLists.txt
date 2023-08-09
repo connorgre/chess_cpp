@@ -5,4 +5,5 @@ target_sources(${Recipe_Name} PUBLIC
     bitHelper.h
     chess.h
     engine.h
+    transTable.h
 )

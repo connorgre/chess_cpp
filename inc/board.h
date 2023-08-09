@@ -113,6 +113,8 @@ struct BoardInfo
 
     uint64 enPassantSquare;
 
+    bool isWhiteTurn;
+
     // Squares that are legal to move to to get out of check.  If we are not in check, this is a
     // mask of the whole board.
     uint64 checkMask;
@@ -130,6 +132,9 @@ struct BoardInfo
     uint64 diagPinMask;
 
     // If the king is checked by a sliding piece, the square behind the king is put into this mask.
+    uint64 kingXRayMoveMask;
+
+    // A mask of squares the king is not allowed to move to
     uint64 illegalKingMoveMask;
 
     // The number of pieces putting the king in check.  This is used to determine if we are in
@@ -137,6 +142,13 @@ struct BoardInfo
     uint32 numPiecesChecking;
 
     uint32 legalCastles;
+
+    // Hash of the board into the transposition table.
+    uint64 zobristKey;
+
+    bool checkAndPinMasksValid;
+
+    bool illegalKingMovesValid;
 };
 
 class Board
@@ -215,6 +227,9 @@ public:
     // Assumes the checkmask has been set already.
     bool InCheck() { return m_boardState.numPiecesChecking != 0; }
 
+    bool IsMoveLegal(const Move& move);
+
+    uint64 GetZobKey() { return m_boardState.zobristKey; }
 private:
     template<bool isWhite>
     void MakeNormalMove(const Move& move);
@@ -285,6 +300,10 @@ private:
     template<bool isWhite>
     uint64 GetSliderSeenSquares(uint64 curKingMoves);
 
+    void InitZobArray();
+
+    void ResetZobKey();
+
     template<bool isWhite, bool hasEnPassant> uint64 GetPawnMoves      (uint64 pos);
     template<bool isWhite, bool ignoreLegal>  uint64 GetKnightMoves    (uint64 pos);
     template<bool isWhite, bool ignoreLegal>  uint64 GetRookMoves      (uint64 pos);
@@ -295,7 +314,10 @@ private:
     template<Piece pieceType, bool isWhite, bool hasEnPassant> uint64 GetPieceMoves(uint64 pos);
 
     uint64 m_pieces[static_cast<uint32>(Piece::PieceCount)];
-    uint64 m_rayTable[Directions::Count][64];
+    uint64 m_pRayTable[Directions::Count][64];
+
+    // the reason it isn't 64 is bc there needs to be extra spaces for ep, castling, and 
+    uint64** m_ppZobristArray;
 
     BoardInfo m_boardState;
 };

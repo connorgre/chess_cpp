@@ -17,7 +17,7 @@ void Board::GetCheckmaskAndPinsInDirection(uint64 pos)
                                                                    GetBishop<!isWhite>());
 
     uint32 posIdx = GetIndex(pos);
-    uint64 ray = m_rayTable[dir][posIdx];
+    uint64 ray = m_pRayTable[dir][posIdx];
 
     // endOfRay will be a 1 bit mask of the enemy sliding piece that sees the king (piece in pos)
     uint64 endOfRay = ray & enemySlideMask;
@@ -36,7 +36,7 @@ void Board::GetCheckmaskAndPinsInDirection(uint64 pos)
     // If there was no piece putting the king under attack, cutoffRay should just be set to mask
     // out the whole ray.
     const bool rayIsZero = endOfRay == 0ull;
-    const uint64 cutoffRay = (rayIsZero) ? ray : m_rayTable[dir][endOfRayIdx];
+    const uint64 cutoffRay = (rayIsZero) ? ray : m_pRayTable[dir][endOfRayIdx];
 
     const uint64 rayToEnemySlider = ray & ~cutoffRay;
 
@@ -62,7 +62,7 @@ void Board::GetCheckmaskAndPinsInDirection(uint64 pos)
                              (dir == NorthWest) ? MoveDownRight(pos) :
                              (dir == SouthEast) ? MoveUpLeft(pos)    :
                                                   MoveUpRight(pos);
-    m_boardState.illegalKingMoveMask |= (numPiecesInRay == 1) ? squareBehindRay : 0ull;
+    m_boardState.kingXRayMoveMask |= (numPiecesInRay == 1) ? squareBehindRay : 0ull;
 
     if constexpr (isHV)
     {
@@ -85,7 +85,7 @@ uint64 Board::CastRayToBlocker(uint64 pos, uint64 mask)
                               (dir == NorthEast) || (dir == NorthWest));
 
     uint32 posIdx = GetIndex(pos);
-    uint64 ray = m_rayTable[dir][posIdx];
+    uint64 ray = m_pRayTable[dir][posIdx];
 
     uint64 endOfRay = ray & mask;
     if constexpr (needLsb)
@@ -101,19 +101,24 @@ uint64 Board::CastRayToBlocker(uint64 pos, uint64 mask)
 
     // If there was no piece blocking us, return just the ray
     const bool noCutoff = endOfRay == 0ull;
-    return (noCutoff) ? ray : ray ^ m_rayTable[dir][endOfRayIdx];
+    return (noCutoff) ? ray : ray ^ m_pRayTable[dir][endOfRayIdx];
 }
 
 // This will generate a mask of all moves to get us out of check, and all pins to the king
 template<bool isWhite>
 void Board::GenerateCheckAndPinMask()
 {
+    // If these are already valid, no need to re-compute
+    if (m_boardState.checkAndPinMasksValid == true)
+    {
+        return;
+    }
     const uint64 kingPos = GetKing<isWhite>();
     m_boardState.checkMask               = 0ull;
     m_boardState.hvPinMask               = 0ull;
     m_boardState.diagPinMask             = 0ull;
     m_boardState.doubleHorizontalPinMask = 0ull;
-    m_boardState.illegalKingMoveMask     = 0ull;
+    m_boardState.kingXRayMoveMask     = 0ull;
     m_boardState.numPiecesChecking       = 0ull;
     m_boardState.legalCastles            = 0ull;
 
@@ -145,10 +150,105 @@ void Board::GenerateCheckAndPinMask()
 
     // If nobody is checking us, we can move anywhere.
     m_boardState.checkMask = (m_boardState.checkMask == 0ull) ? FullBoard : m_boardState.checkMask;
+
+    m_boardState.checkAndPinMasksValid = true;
 }
 
 template void Board::GenerateCheckAndPinMask<true>();
 template void Board::GenerateCheckAndPinMask<false>();
+
+// Checks if we can generate this move right now.  Doesn't necessarily verify the legality of a
+// king move.  I plan on adding that... Maybe an IsKingMoveLegal ? 
+bool Board::IsMoveLegal(const Move& move)
+{
+    bool isLegal = true;
+    if (IsWhite(move.fromPiece))
+    {
+        GenerateCheckAndPinMask<true>();
+    }
+    else
+    {
+        GenerateCheckAndPinMask<false>();
+    }
+    // Are the pieces in the right spot
+    if ((m_pieces[move.fromPiece] & move.fromPos) == 0)
+    {
+        isLegal = false;
+    }
+    if (((m_pieces[move.toPiece] & move.toPos) == 0) && (move.toPiece != Piece::NoPiece))
+    {
+        isLegal = false;
+    }
+
+    // If it's en passant, can we do that
+    if ((move.flags == MoveFlags::EnPassant) && (move.toPos != m_boardState.enPassantSquare))
+    {
+        isLegal = false;
+    }
+
+    // If it's a castle then check that too
+    if (((move.flags & MoveFlags::CastleFlags) != 0) && ((move.flags & m_boardState.castleMask) == 0))
+    {
+        isLegal = false;
+    }
+
+    if (isLegal)
+    {
+        uint64 moves = 0ull;
+        // can we generate that move
+        switch (move.fromPiece)
+        {
+            case(wKing):
+                moves = GetKingMoves<true, false>(move.fromPos);
+                break;
+            case(wQueen):
+                moves = GetQueenMoves<true, false>(move.fromPos);
+                break;
+            case(wRook):
+                moves = GetRookMoves<true, false>(move.fromPos);
+                break;
+            case(wBishop):
+                moves = GetBishopMoves<true, false>(move.fromPos);
+                break;
+            case(wKnight):
+                moves = GetKnightMoves<true, false>(move.fromPos);
+                break;
+            case(wPawn):
+                moves = GetPawnMoves<true, false>(move.fromPos);
+                break;
+
+            case(bKing):
+                moves = GetKingMoves<false, false>(move.fromPos);
+                break;
+            case(bQueen):
+                moves = GetQueenMoves<false, false>(move.fromPos);
+                break;
+            case(bRook):
+                moves = GetRookMoves<false, false>(move.fromPos);
+                break;
+            case(bBishop):
+                moves = GetBishopMoves<false, false>(move.fromPos);
+                break;
+            case(bKnight):
+                moves = GetKnightMoves<false, false>(move.fromPos);
+                break;
+            case(bPawn):
+                moves = GetPawnMoves<false, false>(move.fromPos);
+                break;
+            default:
+                moves = 0ull;
+                isLegal = false;
+                break;
+        }
+
+        if ((moves & move.toPos) == 0ull)
+        {
+            isLegal = false;
+        }
+    }
+
+    return isLegal;
+}
 
 // Generates all legal moves.  I should probably relax king 'seenSquares' rules, and only check
 // those on the first king move.  This should avoid the most expensive part of the check.
@@ -379,9 +479,11 @@ void Board::GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
 }
 
 //=================================================================================================
-template<Piece pieceType, bool isWhite, bool hasEnPassant> 
+template<Piece pieceType, bool isWhite, bool hasEnPassant>
 uint64 Board::GetPieceMoves(uint64 pos)
 {
+    CH_ASSERT(m_boardState.checkAndPinMasksValid);
+
     if      constexpr (pieceType == wKing)   { return GetKingMoves<isWhite, false>(pos); }
     else if constexpr (pieceType == wQueen)  { return GetQueenMoves<isWhite, false>(pos);  }
     else if constexpr (pieceType == wRook)   { return GetRookMoves<isWhite, false>(pos);   }
@@ -559,23 +661,27 @@ uint64 Board::GetKingMoves(uint64 pos)
 
     if constexpr (ignoreLegal == false)
     {
-        // This doesn't fully prune all king moves, but should get rid of some clearly illegal moves.
-        // Can't move into check
-        uint64 illegalMoves = (m_boardState.checkMask == FullBoard) ? 0ull : m_boardState.checkMask;
-        // We can move onto the checkmask only if we are capturing the checking piece
-        illegalMoves &= ~((isWhite) ? m_boardState.blackPieces : m_boardState.whitePieces);
-        // Can't move onto our own team
-        illegalMoves |= ((isWhite) ? m_boardState.whitePieces : m_boardState.blackPieces);
-        // Can't move onto a square behing a sliding piece giving check
-        illegalMoves |= m_boardState.illegalKingMoveMask;
+        if (m_boardState.illegalKingMovesValid == false)
+        {
+            // This doesn't fully prune all king moves, but should get rid of some clearly illegal moves.
+            // Can't move into check
+            uint64 illegalMoves = (m_boardState.checkMask == FullBoard) ? 0ull : m_boardState.checkMask;
+            // We can move onto the checkmask only if we are capturing the checking piece
+            illegalMoves &= ~((isWhite) ? m_boardState.blackPieces : m_boardState.whitePieces);
+            // Can't move onto our own team
+            illegalMoves |= ((isWhite) ? m_boardState.whitePieces : m_boardState.blackPieces);
+            // Can't move onto a square behing a sliding piece giving check
+            illegalMoves |= m_boardState.kingXRayMoveMask;
 
-        uint64 enemySeenSquares = GetPawnKnightKingSeenSquares<!isWhite>();
-        enemySeenSquares |= GetSliderSeenSquares<!isWhite>(kingMoves);
+            uint64 enemySeenSquares = GetPawnKnightKingSeenSquares<!isWhite>();
+            enemySeenSquares |= GetSliderSeenSquares<!isWhite>(kingMoves);
 
-        kingMoves &= ~illegalMoves;
-        kingMoves &= ~enemySeenSquares;
+            m_boardState.illegalKingMoveMask = illegalMoves | enemySeenSquares;
+            m_boardState.illegalKingMovesValid = true;
+        }
+        kingMoves &= ~m_boardState.illegalKingMoveMask;
 
-        const uint64 seenAndOccupiedSquares = enemySeenSquares | m_boardState.allPieces;
+        const uint64 seenAndOccupiedSquares = m_boardState.illegalKingMoveMask | m_boardState.allPieces;
         if constexpr (isWhite)
         {
             const uint64 kingSideSafeSquares = MoveRight(pos) | WhiteKingSideCastleLand;

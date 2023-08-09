@@ -5,4 +5,5 @@ target_sources(${Recipe_Name} PUBLIC
     board.cpp
     board_moveGen.cpp
     engine.cpp
+    transTable.cpp
 )

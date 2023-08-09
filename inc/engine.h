@@ -2,6 +2,7 @@
 
 #include "../inc/board.h"
 #include "../inc/util.h"
+#include "../inc/transTable.h"
 
 // Most Valuble Victim Least Valuble Attacker Array.
 // Array indexed by [attacker][attackee] (attacker is the row, attacked is the column).  A more
@@ -21,6 +22,12 @@ constexpr int32 PosCheckMateScore =  0x6FFF;
 constexpr int32 NegCheckMateScore = -0x6FFF;
 constexpr int32 InitialAlpha      = -0x7FFF;
 constexpr int32 InitialBeta       =  0x7FFF;
+
+constexpr int32 InvalidScore           = -0x5FFF;
+constexpr int32 TTScoreNotFound        = -0x5FF0;
+
+constexpr uint32 MainTransTableSize    = 15485867;  // large-ish prime
+constexpr uint32 QSearchTransTableSize = 999983; // 999983;
 
 constexpr int32 CastleScore = -10;
 
@@ -53,10 +60,14 @@ public:
 
 private:
 
-    Board* m_pBoard;
-    Move   m_moveLists[MaxEngineDepth][MoveTypes::MoveTypeCount][MaxMovesPerPosition];
-    uint64 m_positionsSearched;
-    uint64 m_quiscenceSearched;
+    TranspositionTable m_mainSearchTransTable;
+    TranspositionTable m_qSearchTransTable;
+    Board*  m_pBoard;
+    Move*** m_pppMoveLists;
+    uint64  m_positionsSearched;
+    uint64  m_quiscenceSearched;
+    uint64  m_mainTransTableHits;
+    uint64  m_qTransTableHits;
 
     bool IsMoveGoodForQsearch(const Move& move, bool inCheck);
 

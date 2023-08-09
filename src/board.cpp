@@ -1,12 +1,13 @@
 #include "../inc/board.h"
 #include "../inc/util.h"
 #include "../inc/bitHelper.h"
-
+#include <random>
 Board::Board()
 :
 m_pieces(),
 m_boardState(),
-m_rayTable()
+m_pRayTable(),
+m_ppZobristArray(nullptr)
 {
 
 }
@@ -18,13 +19,21 @@ Board::~Board()
 
 Result Board::Init()
 {
+    InitZobArray();
     ResetBoard();
     GenerateRayTable();
+
     return Result::ErrorNotImplemented;
 }
 
 Result Board::Destroy()
 {
+    for (uint32 idx = 0; idx < Piece::PieceCount; idx++)
+    {
+        free(m_ppZobristArray[idx]);
+    }
+    free(m_ppZobristArray);
+    m_ppZobristArray = nullptr;
     return Result::ErrorNotImplemented;
 }
 
@@ -122,6 +131,16 @@ void Board::SetBoardFromFEN(std::string fenStr)
         fenStrIdx++;
     }
 
+    m_boardState.isWhiteTurn = true;
+    if (fenStr[fenStrIdx] == 'b')
+    {
+        m_boardState.isWhiteTurn = false;
+    }
+    else
+    {
+        CH_ASSERT(fenStr[fenStrIdx] == 'w');
+    }
+
     fenStrIdx++;
     fenStrIdx++;
 
@@ -171,6 +190,9 @@ void Board::SetBoardFromFEN(std::string fenStr)
         }
     }
     m_boardState.allPieces = m_boardState.whitePieces | m_boardState.blackPieces;
+
+    m_boardState.zobristKey = 0ull;
+    ResetZobKey();
 }
 
 void Board::ResetBoard()
@@ -363,6 +385,9 @@ bool Board::VerifyBoard()
     error |= m_boardState.whitePieces != whiteMask;
     error |= m_boardState.blackPieces != blackMask;
 
+    // This has an internal assert.
+    ResetZobKey();
+
     return error != 0;
 }
 
@@ -374,7 +399,7 @@ void Board::GenerateRayTable()
         for (uint32 idx = 0; idx < 64; idx++)
         {
             uint64 pos = 1ull << idx;
-            m_rayTable[dir][idx] = GenerateRayInDirection(pos, static_cast<Directions>(dir));
+            m_pRayTable[dir][idx] = GenerateRayInDirection(pos, static_cast<Directions>(dir));
         }
     }
 }
@@ -382,6 +407,21 @@ void Board::GenerateRayTable()
 template<bool isWhite>
 void Board::MakeMove(const Move& move)
 {
+    // Switch the team.
+    m_boardState.zobristKey ^= m_ppZobristArray[0][65];
+    m_boardState.isWhiteTurn = !m_boardState.isWhiteTurn;
+
+    // These aren't valid anymore
+    m_boardState.checkAndPinMasksValid = false;
+    m_boardState.illegalKingMoveMask = false;
+
+    // Take out EP zobrist
+    if (m_boardState.enPassantSquare != 0ull)
+    {
+        uint32 epIdx = GetIndex(m_boardState.enPassantSquare);
+        m_boardState.zobristKey ^= m_ppZobristArray[Piece::NoPiece][epIdx];
+    }
+
     if (move.flags == MoveFlags::NoFlag)
     {
         MakeNormalMove<isWhite>(move);
@@ -494,11 +534,19 @@ void Board::MakeNormalMove(const Move& move)
     // it is just writing to a garbage data spot
     m_pieces[move.toPiece] ^= move.toPos;
 
+    uint32 fromIdx = GetIndex(move.fromPos);
+    uint32 toIdx = GetIndex(move.toPos);
+
+    m_boardState.zobristKey ^= m_ppZobristArray[move.fromPiece][fromIdx];
+    m_boardState.zobristKey ^= m_ppZobristArray[move.fromPiece][toIdx];
+
+    if (move.toPiece != Piece::NoPiece)
+    {
+        m_boardState.zobristKey ^= m_ppZobristArray[move.toPiece][toIdx];
+    }
+
     m_boardState.allPieces = m_boardState.whitePieces | m_boardState.blackPieces;
 }
-
-template void Board::MakeNormalMove<true>(const Move& move);
-template void Board::MakeNormalMove<false>(const Move& move);
 
 template<bool isWhite>
 void Board::UpdateCastleFlags(const Move& move)
@@ -529,11 +577,25 @@ void Board::UpdateCastleFlags(const Move& move)
     removeCastleFlags |= (noBlackKingside)  ? BlackKingCastle  : 0;
     removeCastleFlags |= (noBlackQueenside) ? BlackQueenCastle : 0;
 
+    if (noWhiteKingside && ((m_boardState.castleMask & WhiteKingCastle) != 0))
+    {
+        m_boardState.zobristKey ^= m_ppZobristArray[WhiteKingCastle][65];
+    }
+    if (noWhiteQueenside && ((m_boardState.castleMask & WhiteQueenCastle) != 0))
+    {
+        m_boardState.zobristKey ^= m_ppZobristArray[WhiteQueenCastle][65];
+    }
+    if (noBlackKingside && ((m_boardState.castleMask & BlackKingCastle) != 0))
+    {
+        m_boardState.zobristKey ^= m_ppZobristArray[BlackKingCastle][65];
+    }
+    if (noBlackQueenside && ((m_boardState.castleMask & BlackQueenCastle) != 0))
+    {
+        m_boardState.zobristKey ^= m_ppZobristArray[BlackQueenCastle][65];
+    }
+
     m_boardState.castleMask &= ~removeCastleFlags;
 }
-template void Board::UpdateCastleFlags<true>(const Move& move);
-template void Board::UpdateCastleFlags<false>(const Move& move);
-
 
 template<MoveFlags moveFlag>
 void Board::MakeCastleMove()
@@ -568,22 +630,47 @@ void Board::MakeCastleMove()
 
     if constexpr (isWhite)
     {
+        if ((m_boardState.castleMask & WhiteKingCastle) != 0ull)
+        {
+            m_boardState.zobristKey ^= m_ppZobristArray[WhiteKingCastle][65];
+        }
+        if ((m_boardState.castleMask & WhiteQueenCastle) != 0ull)
+        {
+            m_boardState.zobristKey ^= m_ppZobristArray[WhiteQueenCastle][65];
+        }
+
         m_boardState.castleMask &= ~(WhiteKingCastle | WhiteQueenCastle);
         m_boardState.whitePieces ^= (kingStart | kingLand | rookStart | rookLand);
     }
     else
     {
+        if ((m_boardState.castleMask & BlackKingCastle) != 0ull)
+        {
+            m_boardState.zobristKey ^= m_ppZobristArray[BlackKingCastle][65];
+        }
+        if ((m_boardState.castleMask & BlackQueenCastle) != 0ull)
+        {
+            m_boardState.zobristKey ^= m_ppZobristArray[BlackQueenCastle][65];
+        }
+
         m_boardState.castleMask &= ~(BlackKingCastle | BlackQueenCastle);
         m_boardState.blackPieces ^= (kingStart | kingLand | rookStart | rookLand);
     }
+
+    const int32 kingStartIdx = GetIndex(kingStart);
+    const int32 kingLandIdx  = GetIndex(kingLand);
+    const int32 rookStartIdx = GetIndex(rookStart);
+    const int32 rookLandIdx  = GetIndex(rookLand);
+
+    m_boardState.zobristKey ^= m_ppZobristArray[kingPiece][kingStartIdx];
+    m_boardState.zobristKey ^= m_ppZobristArray[kingPiece][kingLandIdx];
+
+    m_boardState.zobristKey ^= m_ppZobristArray[rookPiece][rookStartIdx];
+    m_boardState.zobristKey ^= m_ppZobristArray[rookPiece][rookLandIdx];
+
     m_boardState.allPieces ^= (kingStart | kingLand | rookStart | rookLand);
     m_boardState.enPassantSquare = 0ull;
 }
-
-template void Board::MakeCastleMove<MoveFlags::WhiteKingCastle> ();
-template void Board::MakeCastleMove<MoveFlags::WhiteQueenCastle>();
-template void Board::MakeCastleMove<MoveFlags::BlackKingCastle> ();
-template void Board::MakeCastleMove<MoveFlags::BlackQueenCastle>();
 
 template<bool isWhite>
 void Board::MakeEnPassantMove(const Move& move)
@@ -600,7 +687,6 @@ void Board::MakeEnPassantMove(const Move& move)
 
     if constexpr (isWhite)
     {
-
         m_boardState.whitePieces ^= move.fromPos | move.toPos;
         m_boardState.blackPieces ^= enemySquare;
     }
@@ -609,12 +695,18 @@ void Board::MakeEnPassantMove(const Move& move)
         m_boardState.blackPieces ^= move.fromPos | move.toPos;
         m_boardState.whitePieces ^= enemySquare;
     }
+
+    const int32 fromIdx  = GetIndex(move.fromPos);
+    const int32 toIdx    = GetIndex(move.toPos);
+    const int32 enemyIdx = GetIndex(enemySquare);
+
+    m_boardState.zobristKey ^= m_ppZobristArray[teamPawn][fromIdx];
+    m_boardState.zobristKey ^= m_ppZobristArray[teamPawn][toIdx];
+    m_boardState.zobristKey ^= m_ppZobristArray[enemyPawn][enemyIdx];
+
     m_boardState.allPieces ^= (move.fromPos | move.toPos | enemySquare);
     m_boardState.enPassantSquare = 0ull;
 }
-
-template void Board::MakeEnPassantMove<true> (const Move& move);
-template void Board::MakeEnPassantMove<false>(const Move& move);
 
 template<bool isWhite>
 void Board::UpdateEnPassantSquare(const Move& move)
@@ -625,6 +717,7 @@ void Board::UpdateEnPassantSquare(const Move& move)
             (move.toPos == MoveUp(MoveUp(move.fromPos))))
         { 
             m_boardState.enPassantSquare = MoveUp(move.fromPos);
+            m_boardState.zobristKey ^= m_ppZobristArray[Piece::NoPiece][GetIndex(m_boardState.enPassantSquare)];
         }
     }
     else
@@ -633,35 +726,42 @@ void Board::UpdateEnPassantSquare(const Move& move)
             (move.toPos == MoveDown(MoveDown(move.fromPos))))
         {
             m_boardState.enPassantSquare = MoveDown(move.fromPos);
+            m_boardState.zobristKey ^= m_ppZobristArray[Piece::NoPiece][GetIndex(m_boardState.enPassantSquare)];
         }
     }
 }
 
-template void Board::UpdateEnPassantSquare<true>(const Move& move);
-template void Board::UpdateEnPassantSquare<false>(const Move& move);
-
 template<bool isWhite>
 void Board::MakePromotionMove(const Move& move)
 {
+    int32 fromIdx = GetIndex(move.fromPos);
+    int32 toIdx   = GetIndex(move.toPos);
+
     if constexpr (isWhite)
     {
         m_pieces[Piece::wPawn] ^= move.fromPos;
         m_boardState.whitePieces ^= (move.fromPos | move.toPos);
         m_boardState.blackPieces &= (~move.toPos);
 
+        m_boardState.zobristKey ^= m_ppZobristArray[Piece::wPawn][fromIdx];
+
         switch (move.flags)
         {
             case(MoveFlags::QueenPromotion):
                 m_pieces[Piece::wQueen]  |= move.toPos;
+                m_boardState.zobristKey ^= m_ppZobristArray[Piece::wQueen][toIdx];
                 break;
             case(MoveFlags::KnightPromotion):
                 m_pieces[Piece::wKnight] |= move.toPos;
+                m_boardState.zobristKey ^= m_ppZobristArray[Piece::wKnight][toIdx];
                 break;
             case(MoveFlags::RookPromotion):
                 m_pieces[Piece::wRook]   |= move.toPos;
+                m_boardState.zobristKey ^= m_ppZobristArray[Piece::wRook][toIdx];
                 break;
             case(MoveFlags::BishopPromotion):
                 m_pieces[Piece::wBishop] |= move.toPos;
+                m_boardState.zobristKey ^= m_ppZobristArray[Piece::wBishop][toIdx];
                 break;
             default:
                 CH_ASSERT(false);
@@ -673,34 +773,42 @@ void Board::MakePromotionMove(const Move& move)
         m_boardState.blackPieces ^= (move.fromPos | move.toPos);
         m_boardState.whitePieces &= (~move.toPos);
 
+        m_boardState.zobristKey ^= m_ppZobristArray[Piece::bPawn][fromIdx];
+
         switch (move.flags)
         {
             case(MoveFlags::QueenPromotion):
                 m_pieces[Piece::bQueen]  |= move.toPos;
+                m_boardState.zobristKey ^= m_ppZobristArray[Piece::bQueen][toIdx];
                 break;
             case(MoveFlags::KnightPromotion):
                 m_pieces[Piece::bKnight] |= move.toPos;
+                m_boardState.zobristKey ^= m_ppZobristArray[Piece::bKnight][toIdx];
                 break;
             case(MoveFlags::RookPromotion):
                 m_pieces[Piece::bRook]   |= move.toPos;
+                m_boardState.zobristKey ^= m_ppZobristArray[Piece::bRook][toIdx];
                 break;
             case(MoveFlags::BishopPromotion):
                 m_pieces[Piece::bBishop] |= move.toPos;
+                m_boardState.zobristKey ^= m_ppZobristArray[Piece::bBishop][toIdx];
                 break;
             default:
                 CH_ASSERT(false);
         }
     }
+
     UpdateCastleFlags<isWhite>(move);
     m_pieces[move.toPiece] ^= move.toPos;
+
+    if (move.toPiece != Piece::NoPiece)
+    {
+        m_boardState.zobristKey ^= m_ppZobristArray[move.toPiece][toIdx];
+    }
 
     m_boardState.allPieces = m_boardState.whitePieces | m_boardState.blackPieces;
     m_boardState.enPassantSquare = 0;
 }
-
-template void Board::MakePromotionMove<true>(const Move& move);
-template void Board::MakePromotionMove<false>(const Move& move);
-
 
 int32 Board::ScoreBoard()
 {
@@ -713,4 +821,83 @@ int32 Board::ScoreBoard()
     score += PawnScore   * (PopCount(WPawn())   - PopCount(BPawn()));
     
     return score;
+}
+
+void Board::InitZobArray()
+{
+    CH_ASSERT(m_ppZobristArray == nullptr);
+    m_ppZobristArray = static_cast<uint64**>(malloc(sizeof(uint64*) * Piece::PieceCount));
+    for (uint32 idx = 0; idx < Piece::PieceCount; idx++)
+    {
+        m_ppZobristArray[idx] = static_cast<uint64*>(malloc(sizeof(uint64) * 66));
+    }
+
+
+    constexpr uint64 randomSeed = 0x123456789abcdef;
+    std::mt19937_64 gen(randomSeed);  // 64-bit Mersenne Twister engine
+
+    // Define the range for the random integers
+    std::uniform_int_distribution<uint64_t> distribution(
+        std::numeric_limits<uint64_t>::min() + 1,
+        std::numeric_limits<uint64_t>::max() - 1
+    );
+
+    for (uint32 i = 0; i < Piece::PieceCount; i++)
+    {
+        for (uint32 j = 0; j < 66; j++)
+        {
+            m_ppZobristArray[i][j] = distribution(gen);
+        }
+    }
+}
+
+void Board::ResetZobKey()
+{
+    uint64 key = 0ull;
+    for (uint32 pieceIdx = 0; pieceIdx < Piece::NoPiece; pieceIdx++)
+    {
+        uint64 pieces = m_pieces[pieceIdx];
+
+        while (pieces != 0ull)
+        {
+            uint64 piece = GetLSB(pieces);
+            pieces ^= piece;
+
+            uint32 pieceVal = GetIndex(piece);
+            key ^= m_ppZobristArray[pieceIdx][pieceVal];
+        }
+    }
+    if (m_boardState.enPassantSquare != 0ull)
+    {
+        uint32 epIdx = GetIndex(m_boardState.enPassantSquare);
+        key ^= m_ppZobristArray[Piece::NoPiece][epIdx];
+    }
+
+    if (m_boardState.isWhiteTurn == false)
+    {
+        key ^= m_ppZobristArray[0][65];
+    }
+    
+    if ((m_boardState.castleMask & WhiteKingCastle) != 0ull)
+    {
+        key ^= m_ppZobristArray[WhiteKingCastle][65];
+    }
+    if ((m_boardState.castleMask & WhiteQueenCastle) != 0ull)
+    {
+        key ^= m_ppZobristArray[WhiteQueenCastle][65];
+    }
+    if ((m_boardState.castleMask & BlackKingCastle) != 0ull)
+    {
+        key ^= m_ppZobristArray[BlackKingCastle][65];
+    }
+    if ((m_boardState.castleMask & BlackQueenCastle) != 0ull)
+    {
+        key ^= m_ppZobristArray[BlackQueenCastle][65];
+    }
+
+    if (m_boardState.zobristKey != 0ull)
+    {
+        CH_ASSERT(m_boardState.zobristKey == key);
+    }
+    m_boardState.zobristKey = key;
 }

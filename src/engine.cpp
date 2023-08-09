@@ -6,8 +6,11 @@
 ChessEngine::ChessEngine()
 :
 m_pBoard(nullptr),
-m_moveLists(),
-m_positionsSearched(0)
+m_pppMoveLists(nullptr),
+m_positionsSearched(0),
+m_quiscenceSearched(0),
+m_mainTransTableHits(0), 
+m_qTransTableHits(0)
 {
 
 }
@@ -20,17 +23,42 @@ ChessEngine::~ChessEngine()
 void ChessEngine::Init(Board* pBoard)
 {
     m_pBoard = pBoard;
+    m_pppMoveLists = static_cast<Move***>(malloc(sizeof(Move**) * MaxEngineDepth));
+
+    for (uint32 i = 0; i < MaxEngineDepth; i++)
+    {
+        m_pppMoveLists[i] = static_cast<Move**>(malloc(sizeof(Move*) * MoveTypes::MoveTypeCount));
+        for (uint32 j = 0; j < MoveTypes::MoveTypeCount; j++)
+        {
+            m_pppMoveLists[i][j] = static_cast<Move*>(malloc(sizeof(Move) * MaxMovesPerPosition));
+        }
+    }
+    m_mainSearchTransTable.Init(MainTransTableSize);
+    m_qSearchTransTable.Init(QSearchTransTableSize);
 }
 
 void ChessEngine::Destroy()
 {
-
+    for (uint32 i = 0; i < MaxEngineDepth; i++)
+    {
+        for (uint32 j = 0; j < MoveTypes::MoveTypeCount; j++)
+        {
+            free(m_pppMoveLists[i][j]);
+        }
+        free(m_pppMoveLists[i]);
+    }
+    free(m_pppMoveLists);
+    m_pppMoveLists = nullptr;
+    m_mainSearchTransTable.Destroy();
+    m_qSearchTransTable.Destroy();
 }
 
 void ChessEngine::DoEngine(uint32 depth, bool isWhite, bool doMove)
 {
-    m_positionsSearched = 0ull;
-    m_quiscenceSearched = 0ull;
+    m_positionsSearched  = 0ull;
+    m_quiscenceSearched  = 0ull;
+    m_mainTransTableHits = 0ull;
+    m_qTransTableHits    = 0ull;
     Move bestMove = {};
     int32 bestScore = 0;
     auto startTime = std::chrono::steady_clock::now();
@@ -78,6 +106,8 @@ void ChessEngine::DoEngine(uint32 depth, bool isWhite, bool doMove)
     std::cout << "Knps              : " << knps << std::endl;
 
     std::cout << "Quiscence searched: " << m_quiscenceSearched << std::endl;
+    std::cout << "TransTable hits   : " << m_mainTransTableHits << std::endl;
+    std::cout << "QSearch TT hits   : " << m_qTransTableHits << std::endl;
 }
 
 void ChessEngine::DoPerft(uint32 depth, bool isWhite, bool expanded)
@@ -125,9 +155,9 @@ void ChessEngine::DoPerft(uint32 depth, bool isWhite, bool expanded)
 template<bool isWhite>
 uint32 ChessEngine::Perft(uint32 depth, uint32 ply)
 {
-    Move* pCaptureList = &(m_moveLists[ply][MoveTypes::Attack][0]);
+    Move* pCaptureList = &(m_pppMoveLists[ply][MoveTypes::Attack][0]);
     uint32 numCaptures = 0;
-    Move* pNormalList = &(m_moveLists[ply][MoveTypes::Normal][0]);
+    Move* pNormalList = &(m_pppMoveLists[ply][MoveTypes::Normal][0]);
     uint32 numNormal = 0;
 
     m_pBoard->GenerateLegalMoves<isWhite, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
@@ -170,9 +200,9 @@ uint32 ChessEngine::Perft(uint32 depth, uint32 ply)
 template<bool isWhite>
 void ChessEngine::PerftExpanded(uint32 depth)
 {
-    Move* pCaptureList = &(m_moveLists[0][MoveTypes::Attack][0]);
+    Move* pCaptureList = &(m_pppMoveLists[0][MoveTypes::Attack][0]);
     uint32 numCaptures = 0;
-    Move* pNormalList = &(m_moveLists[0][MoveTypes::Normal][0]);
+    Move* pNormalList = &(m_pppMoveLists[0][MoveTypes::Normal][0]);
     uint32 numNormal = 0;
 
     m_pBoard->GenerateLegalMoves<isWhite, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
@@ -244,13 +274,48 @@ int32 ChessEngine::Negmax(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha
         return score;
     }
 
-    Move* pCaptureList = &(m_moveLists[ply][MoveTypes::Attack][0]);
+    TTScoreType ttScoreType = TTScoreType::LowerBound;
+    bool ttMoveValid = false;
+    Move ttMove = {};
+    ttMove = m_mainSearchTransTable.ProbeTable(m_pBoard->GetZobKey(), depth, alpha, beta);
+
+    ttMoveValid = ttMove.score != TTScoreNotFound;
+    if (ttMoveValid)
+    {
+        ttMoveValid = m_pBoard->IsMoveLegal(ttMove);
+    }
+    // TT table hit.
+    if ((ttMove.score != InvalidScore) && ttMoveValid)
+    {
+        if constexpr (onPlyZero)
+        {
+            *pBestMove = ttMove;
+        }
+        m_mainTransTableHits++;
+        return ttMove.score;
+    }
+
+    Move* pCaptureList = &(m_pppMoveLists[ply][MoveTypes::Attack][0]);
     uint32 numCaptures = 0;
-    Move* pNormalList = &(m_moveLists[ply][MoveTypes::Normal][0]);
+    Move* pNormalList = &(m_pppMoveLists[ply][MoveTypes::Normal][0]);
     uint32 numNormal = 0;
+
+    // sneak the tt move onto the front of pCaptureList
+    if (ttMoveValid)
+    {
+        pCaptureList[0] = ttMove;
+        pCaptureList++;
+    }
 
     m_pBoard->GenerateLegalMoves<isWhite, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
     SortMoves(pCaptureList, numCaptures);
+
+    // sneak the tt move onto the front of pCaptureList
+    if (ttMoveValid)
+    {
+        pCaptureList--;
+        numCaptures++;
+    }
 
     const uint32 numMoves = numCaptures + numNormal;
     Move* pMoveList = pCaptureList;
@@ -263,7 +328,8 @@ int32 ChessEngine::Negmax(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha
 
     int32 bestScore = NegCheckMateScore + ply;
 
-
+    Move bestMove = pCaptureList[0];
+    bestMove.score = bestScore;
     for (uint32 moveIdx = 0; moveIdx < numMoves; moveIdx++)
     {
         if (moveIdx == numCaptures)
@@ -278,30 +344,34 @@ int32 ChessEngine::Negmax(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha
         // Flip the sign since this is negmax
         moveScore *= -1;
 
-        // we only fill out the pBestMove on ply 0
-        if constexpr (onPlyZero)
+        if (bestScore < moveScore)
         {
-            if (bestScore < moveScore)
-            {
-                memcpy(pBestMove, &move, sizeof(Move));
-                pBestMove->score = moveScore;
-                bestScore = moveScore;
-            }
-        }
-        else
-        {
-            bestScore = (bestScore < moveScore) ? moveScore : bestScore;
+            bestMove       = move;
+            bestMove.score = moveScore;
+            bestScore      = moveScore;
         }
 
         m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
 
-        alpha = (moveScore > alpha) ? moveScore : alpha;
+        if (bestScore > alpha)
+        {
+            alpha = bestScore;
+            ttScoreType = TTScoreType::Exact;
+        }
 
         if (alpha >= beta)
         {
+            ttScoreType = TTScoreType::UpperBound;
             break;
         }
     }
+
+    if constexpr (onPlyZero)
+    {
+        *pBestMove = bestMove;
+    }
+
+    m_mainSearchTransTable.InsertToTable(m_pBoard->GetZobKey(), depth, bestMove, ttScoreType);
 
     return bestScore;
 }
@@ -337,9 +407,24 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
     }
     m_quiscenceSearched++;
 
-    Move* pCaptureList = &(m_moveLists[ply][MoveTypes::Attack][0]);
+    TTScoreType ttScoreType = TTScoreType::LowerBound;
+    Move ttMove = m_qSearchTransTable.ProbeTable(m_pBoard->GetZobKey(), 0, alpha, beta);
+
+    bool ttMoveValid = ttMove.score != TTScoreNotFound;
+    if (ttMoveValid)
+    {
+        ttMoveValid = m_pBoard->IsMoveLegal(ttMove);
+    }
+    // TT table hit.
+    if ((ttMove.score != InvalidScore) && ttMoveValid)
+    {
+        m_qTransTableHits++;
+        return ttMove.score;
+    }
+
+    Move* pCaptureList = &(m_pppMoveLists[ply][MoveTypes::Attack][0]);
     uint32 numCaptures = 0;
-    Move* pNormalList = &(m_moveLists[ply][MoveTypes::Normal][0]);
+    Move* pNormalList = &(m_pppMoveLists[ply][MoveTypes::Normal][0]);
     uint32 numNormal = 0;
 
     m_pBoard->GenerateLegalMoves<isWhite, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
@@ -357,7 +442,16 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
     m_pBoard->CopyPieceData(&(prevBoardPieces[0]));
 
     int32 bestScore = standPatScore;
-    alpha = (bestScore > alpha) ? bestScore : alpha;
+
+    Move  bestMove = {};
+    bestMove.score = bestScore;
+
+    if (bestScore > alpha)
+    {
+        alpha = bestScore;
+    }
+
+    bool didMove = false;
     for (uint32 moveIdx = 0; moveIdx < numMoves; moveIdx++)
     {
         if (moveIdx == numCaptures)
@@ -372,7 +466,7 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
             break;
         }
         m_pBoard->MakeMove<isWhite>(move);
-
+        didMove = true;
         int32 moveScore = QuiscenceSearch<!isWhite>(ply + 1, beta * -1, alpha * -1);
         // Flip the sign since this is negmax
         moveScore *= -1;
@@ -381,14 +475,25 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
 
         m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
 
-        alpha = (bestScore > alpha) ? bestScore : alpha;
+        if (bestScore > alpha)
+        {
+            ttScoreType = TTScoreType::Exact;
+            bestMove = move;
+            bestMove.score = bestScore;
+            alpha = bestScore;
+        }
 
         if (alpha >= beta)
         {
+            ttScoreType = TTScoreType::UpperBound;
             break;
         }
     }
 
+    if (didMove)
+    {
+        m_qSearchTransTable.InsertToTable(m_pBoard->GetZobKey(), 0, bestMove, ttScoreType);
+    }
     return bestScore;
 }
 
