@@ -34,11 +34,14 @@ constexpr int32 CastleScore = -10;
 struct SearchSettings
 {
     bool  onPv;                     //> Principle Variation doesn't have any pruning
-    bool  allowNullMove;            //> Prune moves where the other team can't improve their score
+    bool  nullMovePrune;            //> Prune moves where the other team can't improve their score
                                     //  with a free move
     bool  aspirationWindow;         //> On iterative deepening, try search with smaller initial
     int32 aspirationWindowSize;     //  alpha/beta window, retry with full window if we end up
                                     //  outside window
+
+    bool   futilityPrune;           //> Skip to qSearch when we are down by more than a knight
+    uint32 futilityCutoff;          //> Futility value to cutoff with
 };
 
 class ChessEngine
@@ -70,6 +73,7 @@ public:
 
     void SetupInitialSearchSettings(SearchSettings *pSearchSettings);
 
+    void ResetTransTable() { m_mainSearchTransTable.ResetTable(); m_qSearchTransTable.ResetTable(); }
 private:
     
     template<bool isWhite>
@@ -88,6 +92,7 @@ private:
         uint64  qTransTableHits;
         uint64  nullMoveCutoffs;
         uint64  normalSearched;
+        uint64  futilityCutoffs;
     } m_searchValues;;
     
 

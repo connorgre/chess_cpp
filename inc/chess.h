@@ -60,8 +60,9 @@ struct InputCommand
 
         struct
         {
+            bool isTTReset;
             char fenStr[MaxFenStrLength];
-        } resetFen;
+        } reset;
     };
 };
 

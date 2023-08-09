@@ -60,7 +60,14 @@ void ChessGame::Run()
                 }
                 break;
             case (Commands::Reset):
-                m_board.SetBoardFromFEN(command.resetFen.fenStr);
+                if (command.reset.isTTReset)
+                {
+                    m_engine.ResetTransTable();
+                }
+                else
+                {
+                    m_board.SetBoardFromFEN(command.reset.fenStr);
+                }
                 break;
             case (Commands::Quit):
                 running = false;
@@ -453,22 +460,27 @@ Result ChessGame::ParseResetCommand(
 {
     Result result = Result::Success;
     uint32 vecLen = wordVec.size();
+    pInputCommand->reset.isTTReset = false;
     if (vecLen == 1)
     {
         char fenStr[] = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -";
-        memcpy(pInputCommand->resetFen.fenStr, fenStr, sizeof(fenStr));
+        memcpy(pInputCommand->reset.fenStr, fenStr, sizeof(fenStr));
     }
     else if (vecLen == 2)
     {
         if (wordVec[1] == "kiwipete")
         {
             char fenStr[] = "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -";
-            memcpy(pInputCommand->resetFen.fenStr, fenStr, sizeof(fenStr));
+            memcpy(pInputCommand->reset.fenStr, fenStr, sizeof(fenStr));
         }
         else if (wordVec[1] == "1")
         {
             char fenStr[] = "3qkr/3pp1/6P/7B/8/8/P7/K7 b - -";
-            memcpy(pInputCommand->resetFen.fenStr, fenStr, sizeof(fenStr));
+            memcpy(pInputCommand->reset.fenStr, fenStr, sizeof(fenStr));
+        }
+        else if ((wordVec[1] == "tt") || (wordVec[1] == "transtable"))
+        {
+            pInputCommand->reset.isTTReset = true;
         }
         else
         {

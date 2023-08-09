@@ -225,6 +225,7 @@ public:
 
     void SetBoardFromFEN(std::string fen);
 
+    template<bool isWhite>
     int32 ScoreBoard();
 
     // Assumes the checkmask has been set already.

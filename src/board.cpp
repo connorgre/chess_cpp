@@ -833,6 +833,7 @@ void Board::MakePromotionMove(const Move& move)
     m_boardState.enPassantSquare = 0;
 }
 
+template<bool isWhite>
 int32 Board::ScoreBoard()
 {
     int32 score = 0;
@@ -842,9 +843,14 @@ int32 Board::ScoreBoard()
     score += BishopScore * (PopCount(WBishop()) - PopCount(BBishop()));
     score += KnightScore * (PopCount(WKnight()) - PopCount(BKnight()));
     score += PawnScore   * (PopCount(WPawn())   - PopCount(BPawn()));
-    
+
+    constexpr int32 multFactor = (isWhite) ? 1 : -1;
+    score *= multFactor;
+
     return score;
 }
+template int32 Board::ScoreBoard<true>();
+template int32 Board::ScoreBoard<false>();
 
 void Board::InitZobArray()
 {
