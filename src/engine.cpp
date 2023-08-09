@@ -52,19 +52,24 @@ void ChessEngine::Destroy()
 
 void ChessEngine::SetupInitialSearchSettings(SearchSettings* pSettings)
 {
-    pSettings->onPv                 = true;
+    pSettings->onPv                   = true;
 
-    pSettings->nullMovePrune        = true;
-    pSettings->nullMoveDepth        = 3;
+    pSettings->nullMovePrune          = true;
+    pSettings->nullMoveDepth          = 3;
 
-    pSettings->aspirationWindow     = true;
-    pSettings->aspirationWindowSize = PieceScores::PawnScore;
+    pSettings->aspirationWindow       = true;
+    pSettings->aspirationWindowSize   = PieceScores::PawnScore;
 
-    pSettings->futilityPrune        = true;
-    pSettings->futilityCutoff       = PieceScores::KnightScore;
+    pSettings->futilityPrune          = true;
+    pSettings->futilityCutoff         = PieceScores::KnightScore;
 
     pSettings->extendedFutilityPrune  = true;
     pSettings->extendedFutilityCutoff = PieceScores::RookScore;
+
+    pSettings->multiCutPrune          = true;
+    pSettings->multiCutMoves          = 6;
+    pSettings->multiCutThreshold      = 3;
+    pSettings->mulitCutDepth          = 3;
 }
 
 void ChessEngine::DoEngine(uint32 depth, bool isWhite, bool doMove)
@@ -110,12 +115,12 @@ void ChessEngine::DoEngine(uint32 depth, bool isWhite, bool doMove)
 
     std::string scoreStr = ConvertScoreToStr(bestMove.score);
 
-    std::cout << "Best Move         : " << bestMoveStr << std::endl;
-    std::cout << "Score             : " << scoreStr << std::endl;
+    std::cout << "Best Move          : " << bestMoveStr << std::endl;
+    std::cout << "Score              : " << scoreStr << std::endl;
 
-    std::cout << "Time              : " << totalTime.count() << " ms" << std::endl;
-    std::cout << "Positions searched: " << m_searchValues.positionsSearched << std::endl;
-    std::cout << "Knps              : " << knps << std::endl;
+    std::cout << "Time               : " << totalTime.count() << " ms" << std::endl;
+    std::cout << "Positions searched : " << m_searchValues.positionsSearched << std::endl;
+    std::cout << "Knps               : " << knps << std::endl;
 
     std::cout << "Normal Searched      : " << m_searchValues.normalSearched << std::endl;
     std::cout << "Quiscence searched   : " << m_searchValues.quiscenceSearched << std::endl;
@@ -124,6 +129,7 @@ void ChessEngine::DoEngine(uint32 depth, bool isWhite, bool doMove)
     std::cout << "Null Move Prunes     : " << m_searchValues.nullMoveCutoffs << std::endl;
     std::cout << "Futility Prunes      : " << m_searchValues.futilityCutoffs << std::endl;
     std::cout << "Extended Fut. Prunes : " << m_searchValues.extendedFutilityCutoffs << std::endl;
+    std::cout << "MultiCut Prunes      : " << m_searchValues.multiCutCutoffs << std::endl;
 }
 
 void ChessEngine::DoPerft(uint32 depth, bool isWhite, bool expanded)
@@ -308,7 +314,7 @@ int32 ChessEngine::Negmax(
     Move*          pBestMove, 
     int32          alpha, 
     int32          beta, 
-    SearchSettings searchSettings)
+    SearchSettings settings)
 {
     m_searchValues.positionsSearched++;
     constexpr int32 scoreMultiplier = (isWhite) ? 1 : -1;
@@ -351,14 +357,14 @@ int32 ChessEngine::Negmax(
         return ttMove.score;
     }
 
-    const bool canFutilityPrune = (searchSettings.futilityPrune) &&
-                                  (searchSettings.onPv == false) &&
+    const bool canFutilityPrune = (settings.futilityPrune) &&
+                                  (settings.onPv == false) &&
                                   (depth == 1) &&
                                   (inCheck == false);
     if (canFutilityPrune)
     {
         int32 futilityScore = m_pBoard->ScoreBoard<isWhite>();
-        if (futilityScore < alpha - searchSettings.futilityCutoff)
+        if (futilityScore < alpha - settings.futilityCutoff)
         {
             int32 futilityScore = QuiscenceSearch<isWhite>(ply, alpha, beta);
             m_searchValues.futilityCutoffs++;
@@ -366,14 +372,14 @@ int32 ChessEngine::Negmax(
         }
     }
 
-    const bool canExtendedFutilityPrune = (searchSettings.extendedFutilityPrune) &&
-                                          (searchSettings.onPv == false)         &&
+    const bool canExtendedFutilityPrune = (settings.extendedFutilityPrune) &&
+                                          (settings.onPv == false)         &&
                                           (depth == 2)                           &&
                                           (inCheck == false);
     if (canExtendedFutilityPrune)
     {
         int32 futilityScore = m_pBoard->ScoreBoard<isWhite>();
-        if (futilityScore < alpha - searchSettings.extendedFutilityCutoff)
+        if (futilityScore < alpha - settings.extendedFutilityCutoff)
         {
             int32 futilityScore = QuiscenceSearch<isWhite>(ply, alpha, beta);
             m_searchValues.extendedFutilityCutoffs++;
@@ -387,22 +393,23 @@ int32 ChessEngine::Negmax(
     m_pBoard->CopyPieceData(&(prevBoardPieces[0]));
 
     // If we can do a NullMoveSearch
-    const bool canNullPrune = (searchSettings.nullMovePrune)             &&
-                              (searchSettings.onPv == false)             &&
-                              (depth > searchSettings.nullMoveDepth + 1) &&
+    const bool canNullPrune = (settings.nullMovePrune)             &&
+                              (settings.onPv == false)             &&
+                              (depth > settings.nullMoveDepth + 1) &&
                               (inCheck == false);
     if (canNullPrune)
     {
         int32 nullMoveScore = 0;
-        searchSettings.nullMovePrune = false;
-        const uint32 depthReduction = searchSettings.nullMoveDepth;
+        settings.nullMovePrune = false;
+        const uint32 depthReduction = settings.nullMoveDepth;
         m_pBoard->MakeNullMove<isWhite>();
-        nullMoveScore = Negmax<isWhite, false>(depth - depthReduction,
-                                               ply + 1,
-                                               nullptr,
-                                               0 - beta,
-                                               1 - beta,
-                                               searchSettings);
+        nullMoveScore = Negmax<!isWhite, false>(depth - depthReduction,
+                                                ply + 1,
+                                                nullptr,
+                                                0 - beta,
+                                                1 - beta,
+                                                settings);
+        nullMoveScore *= -1;
         m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
 
         if (nullMoveScore >= beta)
@@ -411,7 +418,7 @@ int32 ChessEngine::Negmax(
             return beta;
         }
 
-        searchSettings.nullMovePrune = true;
+        settings.nullMovePrune = true;
     }
 
     Move* pCaptureList = &(m_pppMoveLists[ply][MoveTypes::Attack][0]);
@@ -440,10 +447,59 @@ int32 ChessEngine::Negmax(
     Move* pMoveList = pCaptureList;
     uint32 idxSubtractVal = 0;
 
+
+    const bool canDoMultiCut = (settings.onPv == false) &&
+                               (settings.multiCutPrune == true) &&
+                               (inCheck == false)                     &&
+                               (depth > settings.mulitCutDepth + 1);
+    if (canDoMultiCut)
+    {
+        uint32 numBetaCutoffs = 0;
+        settings.multiCutPrune = false;
+        uint32 numMultiCutMoves = (settings.multiCutMoves < numMoves) ? settings.multiCutMoves :
+                                                                        numMoves;
+        for (uint32 moveIdx = 0; moveIdx < numMoves; moveIdx++)
+        {
+            if (moveIdx == numCaptures)
+            {
+                pMoveList = pNormalList;
+                idxSubtractVal = numCaptures;
+            }
+            const Move move = pMoveList[moveIdx - idxSubtractVal];
+            m_pBoard->MakeMove<isWhite>(move);
+
+            int32 multiCutMoveScore = Negmax<!isWhite, false>(depth - settings.mulitCutDepth,
+                                                              ply + 1,
+                                                              nullptr,
+                                                              0 - beta,
+                                                              1 - beta,
+                                                              settings);
+            multiCutMoveScore *= -1;
+            m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
+
+            if (multiCutMoveScore >= beta)
+            {
+                numBetaCutoffs++;
+                if (numBetaCutoffs >= settings.multiCutThreshold)
+                {
+                    m_searchValues.multiCutCutoffs++;
+                    return beta;
+                }
+            }
+
+        }
+        settings.multiCutPrune = true;
+    }
+
     int32 bestScore = NegCheckMateScore + ply;
 
     Move bestMove = pCaptureList[0];
     bestMove.score = bestScore;
+
+    // reset these in case they got changed in the pruning searches
+    pMoveList = pCaptureList;
+    idxSubtractVal = 0;
+
     for (uint32 moveIdx = 0; moveIdx < numMoves; moveIdx++)
     {
         if (moveIdx == numCaptures)
@@ -454,7 +510,12 @@ int32 ChessEngine::Negmax(
         const Move move = pMoveList[moveIdx - idxSubtractVal];
         m_pBoard->MakeMove<isWhite>(move);
 
-        int32 moveScore = Negmax<!isWhite, false>(depth - 1, ply + 1, nullptr, beta * -1, alpha * -1, searchSettings);
+        int32 moveScore = Negmax<!isWhite, false>(depth - 1, 
+                                                  ply + 1,
+                                                  nullptr,
+                                                  beta * -1,
+                                                  alpha * -1,
+                                                  settings);
         // Flip the sign since this is negmax
         moveScore *= -1;
 
@@ -467,7 +528,7 @@ int32 ChessEngine::Negmax(
 
         m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
 
-        searchSettings.onPv = false;
+        settings.onPv = false;
 
         if (bestScore > alpha)
         {

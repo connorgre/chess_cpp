@@ -49,6 +49,11 @@ struct SearchSettings
     bool   extendedFutilityPrune;   //> Skip to qSearch when we are down by more than
                                     //  extendedFutilityCutoff on depth 2
     uint32 extendedFutilityCutoff;  //> Extended futility value to cutoff with (rook value)
+
+    bool   multiCutPrune;           //> Do a reduced depth search on the first multiCutMoves, if
+    uint32 multiCutMoves;           //  the number of beta cutoffs >= multiCutThreshold, then
+    uint32 multiCutThreshold;       //  return beta
+    uint32 mulitCutDepth;
 };
 
 class ChessEngine
@@ -101,6 +106,7 @@ private:
         uint64  normalSearched;
         uint64  futilityCutoffs;
         uint64  extendedFutilityCutoffs;
+        uint64  multiCutCutoffs;
     } m_searchValues;
 
     bool IsMoveGoodForQsearch(const Move& move, bool inCheck);
