@@ -33,15 +33,22 @@ constexpr int32 CastleScore = -10;
 
 struct SearchSettings
 {
-    bool  onPv;                     //> Principle Variation doesn't have any pruning
-    bool  nullMovePrune;            //> Prune moves where the other team can't improve their score
-                                    //  with a free move
+    bool   onPv;                    //> Principle Variation doesn't have any pruning
+    bool   nullMovePrune;           //> Prune moves where the other team can't improve their score
+                                    //  with a free move on a reduced depth search
+    uint32 nullMoveDepth;           //> Depth reduction for null moves
+
     bool  aspirationWindow;         //> On iterative deepening, try search with smaller initial
     int32 aspirationWindowSize;     //  alpha/beta window, retry with full window if we end up
                                     //  outside window
 
-    bool   futilityPrune;           //> Skip to qSearch when we are down by more than a knight
-    uint32 futilityCutoff;          //> Futility value to cutoff with
+    bool   futilityPrune;           //> Skip to qSearch when we are down by more than a 
+                                    //  futilityCutoff on depth 1
+    uint32 futilityCutoff;          //> Futility value to cutoff with (knight value)
+
+    bool   extendedFutilityPrune;   //> Skip to qSearch when we are down by more than
+                                    //  extendedFutilityCutoff on depth 2
+    uint32 extendedFutilityCutoff;  //> Extended futility value to cutoff with (rook value)
 };
 
 class ChessEngine
@@ -93,8 +100,8 @@ private:
         uint64  nullMoveCutoffs;
         uint64  normalSearched;
         uint64  futilityCutoffs;
-    } m_searchValues;;
-    
+        uint64  extendedFutilityCutoffs;
+    } m_searchValues;
 
     bool IsMoveGoodForQsearch(const Move& move, bool inCheck);
 

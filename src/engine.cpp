@@ -53,13 +53,18 @@ void ChessEngine::Destroy()
 void ChessEngine::SetupInitialSearchSettings(SearchSettings* pSettings)
 {
     pSettings->onPv                 = true;
+
     pSettings->nullMovePrune        = true;
+    pSettings->nullMoveDepth        = 3;
 
     pSettings->aspirationWindow     = true;
     pSettings->aspirationWindowSize = PieceScores::PawnScore;
 
     pSettings->futilityPrune        = true;
     pSettings->futilityCutoff       = PieceScores::KnightScore;
+
+    pSettings->extendedFutilityPrune  = true;
+    pSettings->extendedFutilityCutoff = PieceScores::RookScore;
 }
 
 void ChessEngine::DoEngine(uint32 depth, bool isWhite, bool doMove)
@@ -112,12 +117,13 @@ void ChessEngine::DoEngine(uint32 depth, bool isWhite, bool doMove)
     std::cout << "Positions searched: " << m_searchValues.positionsSearched << std::endl;
     std::cout << "Knps              : " << knps << std::endl;
 
-    std::cout << "Normal Searched   : " << m_searchValues.normalSearched << std::endl;
-    std::cout << "Quiscence searched: " << m_searchValues.quiscenceSearched << std::endl;
-    std::cout << "TransTable hits   : " << m_searchValues.mainTransTableHits << std::endl;
-    std::cout << "QSearch TT hits   : " << m_searchValues.qTransTableHits << std::endl;
-    std::cout << "Null Move Prunes  : " << m_searchValues.nullMoveCutoffs << std::endl;
-    std::cout << "Futility Prunes   : " << m_searchValues.futilityCutoffs << std::endl;
+    std::cout << "Normal Searched      : " << m_searchValues.normalSearched << std::endl;
+    std::cout << "Quiscence searched   : " << m_searchValues.quiscenceSearched << std::endl;
+    std::cout << "TransTable hits      : " << m_searchValues.mainTransTableHits << std::endl;
+    std::cout << "QSearch TT hits      : " << m_searchValues.qTransTableHits << std::endl;
+    std::cout << "Null Move Prunes     : " << m_searchValues.nullMoveCutoffs << std::endl;
+    std::cout << "Futility Prunes      : " << m_searchValues.futilityCutoffs << std::endl;
+    std::cout << "Extended Fut. Prunes : " << m_searchValues.extendedFutilityCutoffs << std::endl;
 }
 
 void ChessEngine::DoPerft(uint32 depth, bool isWhite, bool expanded)
@@ -345,36 +351,9 @@ int32 ChessEngine::Negmax(
         return ttMove.score;
     }
 
-    BoardInfo prevBoardData = {};
-    uint64 prevBoardPieces[static_cast<uint32>(Piece::PieceCount)];
-    m_pBoard->CopyBoardData(&prevBoardData);
-    m_pBoard->CopyPieceData(&(prevBoardPieces[0]));
-
-    // If we can do a NullMoveSearch
-    const bool canNullPrune = (searchSettings.nullMovePrune) &&
-                              (searchSettings.onPv == false) &&
-                              (depth > 4)                    &&
-                              (inCheck == false);
-    if (canNullPrune)
-    {
-        int32 nullMoveScore = 0;
-        searchSettings.nullMovePrune = false;
-        m_pBoard->MakeNullMove<isWhite>();
-        nullMoveScore = Negmax<isWhite, false>(depth - 3, ply + 1, nullptr, 0 - beta, 1 - beta, searchSettings);
-        m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
-
-        if (nullMoveScore >= beta)
-        {
-            m_searchValues.nullMoveCutoffs++;
-            return beta;
-        }
-
-        searchSettings.nullMovePrune = true;
-    }
-
     const bool canFutilityPrune = (searchSettings.futilityPrune) &&
                                   (searchSettings.onPv == false) &&
-                                  (depth == 1)                   &&
+                                  (depth == 1) &&
                                   (inCheck == false);
     if (canFutilityPrune)
     {
@@ -385,6 +364,54 @@ int32 ChessEngine::Negmax(
             m_searchValues.futilityCutoffs++;
             return futilityScore;
         }
+    }
+
+    const bool canExtendedFutilityPrune = (searchSettings.extendedFutilityPrune) &&
+                                          (searchSettings.onPv == false)         &&
+                                          (depth == 2)                           &&
+                                          (inCheck == false);
+    if (canExtendedFutilityPrune)
+    {
+        int32 futilityScore = m_pBoard->ScoreBoard<isWhite>();
+        if (futilityScore < alpha - searchSettings.extendedFutilityCutoff)
+        {
+            int32 futilityScore = QuiscenceSearch<isWhite>(ply, alpha, beta);
+            m_searchValues.extendedFutilityCutoffs++;
+            return futilityScore;
+        }
+    }
+
+    BoardInfo prevBoardData = {};
+    uint64 prevBoardPieces[static_cast<uint32>(Piece::PieceCount)];
+    m_pBoard->CopyBoardData(&prevBoardData);
+    m_pBoard->CopyPieceData(&(prevBoardPieces[0]));
+
+    // If we can do a NullMoveSearch
+    const bool canNullPrune = (searchSettings.nullMovePrune)             &&
+                              (searchSettings.onPv == false)             &&
+                              (depth > searchSettings.nullMoveDepth + 1) &&
+                              (inCheck == false);
+    if (canNullPrune)
+    {
+        int32 nullMoveScore = 0;
+        searchSettings.nullMovePrune = false;
+        const uint32 depthReduction = searchSettings.nullMoveDepth;
+        m_pBoard->MakeNullMove<isWhite>();
+        nullMoveScore = Negmax<isWhite, false>(depth - depthReduction,
+                                               ply + 1,
+                                               nullptr,
+                                               0 - beta,
+                                               1 - beta,
+                                               searchSettings);
+        m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
+
+        if (nullMoveScore >= beta)
+        {
+            m_searchValues.nullMoveCutoffs++;
+            return beta;
+        }
+
+        searchSettings.nullMovePrune = true;
     }
 
     Move* pCaptureList = &(m_pppMoveLists[ply][MoveTypes::Attack][0]);
