@@ -183,6 +183,9 @@ public:
     template<bool isWhite>
     void GenerateCheckAndPinMask();
 
+    template<bool isWhite>
+    void GenerateIllegalKingMoveMask();
+
     // Gets all the legal moves and puts them in a pre-allocated list of moves.  The final move
     // in each list has Move::fromPiece == EndOfMoveList
     template<bool isWhite, bool onlyCaptures>

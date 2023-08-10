@@ -1,6 +1,7 @@
 #include "../inc/transTable.h"
 #include "../inc/engine.h"
 #include "../inc/bitHelper.h"
+#include <intrin.h>
 
 TranspositionTable::TranspositionTable()
 :
@@ -31,6 +32,13 @@ void TranspositionTable::Destroy()
     m_pTable = nullptr;
 }
 
+void TranspositionTable::PrefetchEntry(uint64 zobKey)
+{
+    uint32 entryIdx = HashZobKey(zobKey);
+    const char* pEntry = reinterpret_cast<char*>(&(m_pTable[entryIdx]));
+    _mm_prefetch(pEntry, _MM_HINT_NTA);
+}
+
 Move TranspositionTable::ProbeTable(
     uint64 zobKey, 
     int32 depth, 
@@ -38,6 +46,7 @@ Move TranspositionTable::ProbeTable(
     int32 beta)
 {
     uint32 entryIdx = HashZobKey(zobKey);
+
     TransTableEntry tableEntry = m_pTable[entryIdx];
 
     Move move = {};

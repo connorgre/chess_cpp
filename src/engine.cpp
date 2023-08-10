@@ -336,8 +336,12 @@ int32 ChessEngine::Negmax(
     }
     m_searchValues.normalSearched++;
 
+    // Prefetch the TT before generating the check and pin masks
+    m_mainSearchTransTable.PrefetchEntry(m_pBoard->GetZobKey());
+
     // This will allow us to know if we are in check ahead of time
     m_pBoard->GenerateCheckAndPinMask<isWhite>();
+
     bool inCheck = m_pBoard->InCheck();
 
     TTScoreType ttScoreType = TTScoreType::LowerBound;
@@ -562,6 +566,7 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
         return alpha;
     }
 
+    m_qSearchTransTable.PrefetchEntry(m_pBoard->GetZobKey());
     m_pBoard->GenerateCheckAndPinMask<isWhite>();
 
     TTScoreType ttScoreType = TTScoreType::LowerBound;

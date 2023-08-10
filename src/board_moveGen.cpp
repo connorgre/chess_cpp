@@ -683,24 +683,7 @@ uint64 Board::GetKingMoves(uint64 pos)
 
     if constexpr (ignoreLegal == false)
     {
-        if (m_boardState.illegalKingMovesValid == false)
-        {
-            // This doesn't fully prune all king moves, but should get rid of some clearly illegal moves.
-            // Can't move into check
-            uint64 illegalMoves = (m_boardState.checkMask == FullBoard) ? 0ull : m_boardState.checkMask;
-            // We can move onto the checkmask only if we are capturing the checking piece
-            illegalMoves &= ~((isWhite) ? m_boardState.blackPieces : m_boardState.whitePieces);
-            // Can't move onto our own team
-            illegalMoves |= ((isWhite) ? m_boardState.whitePieces : m_boardState.blackPieces);
-            // Can't move onto a square behing a sliding piece giving check
-            illegalMoves |= m_boardState.kingXRayMoveMask;
-
-            uint64 enemySeenSquares = GetPawnKnightKingSeenSquares<!isWhite>();
-            enemySeenSquares |= GetSliderSeenSquares<!isWhite>(kingMoves);
-
-            m_boardState.illegalKingMoveMask = illegalMoves | enemySeenSquares;
-            m_boardState.illegalKingMovesValid = true;
-        }
+        GenerateIllegalKingMoveMask<isWhite>();
         kingMoves &= ~m_boardState.illegalKingMoveMask;
 
         const uint64 seenAndOccupiedSquares = m_boardState.illegalKingMoveMask | m_boardState.allPieces;
@@ -811,6 +794,35 @@ uint64 Board::GetSliderSeenSquares(uint64 curKingMoves)
 
 template uint64 Board::GetSliderSeenSquares<true>(uint64 curKingMoves);
 template uint64 Board::GetSliderSeenSquares<false>(uint64 curKingMoves);
+
+template<bool isWhite>
+void Board::GenerateIllegalKingMoveMask()
+{
+    if (m_boardState.illegalKingMovesValid == false)
+    {
+        // we need the check mask here.
+        GenerateCheckAndPinMask<isWhite>();
+
+        // This doesn't fully prune all king moves, but should get rid of some clearly illegal moves.
+        // Can't move into check
+        uint64 illegalMoves = (m_boardState.checkMask == FullBoard) ? 0ull : m_boardState.checkMask;
+        // We can move onto the checkmask only if we are capturing the checking piece
+        illegalMoves &= ~((isWhite) ? m_boardState.blackPieces : m_boardState.whitePieces);
+        // Can't move onto our own team
+        illegalMoves |= ((isWhite) ? m_boardState.whitePieces : m_boardState.blackPieces);
+        // Can't move onto a square behing a sliding piece giving check
+        illegalMoves |= m_boardState.kingXRayMoveMask;
+
+        uint64 enemySeenSquares = GetPawnKnightKingSeenSquares<!isWhite>();
+        enemySeenSquares |= GetSliderSeenSquares<!isWhite>(0ull);
+
+        m_boardState.illegalKingMoveMask = illegalMoves | enemySeenSquares;
+        m_boardState.illegalKingMovesValid = true;
+    }
+}
+
+template void Board::GenerateIllegalKingMoveMask<true>();
+template void Board::GenerateIllegalKingMoveMask<false>();
 
 template<bool isWhite>
 Piece Board::GetPieceFromPos(uint64 pos)

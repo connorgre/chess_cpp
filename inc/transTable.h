@@ -52,6 +52,8 @@ public:
 
     void InsertToTable(uint64 zobKey, int32 depth, const Move& move, TTScoreType type);
 
+    void PrefetchEntry(uint64 zobKey);
+
     void ResetTable();
 private:
 
