@@ -832,7 +832,7 @@ void Board::GenerateIllegalKingMoveMask()
         illegalMoves |= m_boardState.kingXRayMoveMask;
 
         uint64 enemySeenSquares = GetPawnKnightKingSeenSquares<!isWhite>();
-        enemySeenSquares |= GetSliderSeenSquares<!isWhite>(0ull);
+        enemySeenSquares |= GetSliderSeenSquares<!isWhite>(FullBoard);
 
         m_boardState.illegalKingMoveMask = illegalMoves | enemySeenSquares;
         m_boardState.illegalKingMovesValid = true;

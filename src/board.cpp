@@ -22,6 +22,7 @@ Result Board::Init()
     InitZobArray();
     ResetBoard();
     GenerateRayTable();
+    ResetPieceScore();
 
     return Result::ErrorNotImplemented;
 }
@@ -193,6 +194,7 @@ void Board::SetBoardFromFEN(std::string fenStr)
 
     m_boardState.zobristKey = 0ull;
     ResetZobKey();
+    ResetPieceScore();
 }
 
 void Board::ResetBoard()
@@ -568,6 +570,9 @@ void Board::MakeNormalMove(const Move& move)
         m_boardState.zobristKey ^= m_ppZobristArray[move.toPiece][toIdx];
     }
 
+    // Subtract the value of the piece that was captured
+    m_boardState.pieceValueScore -= PieceValueArray[move.toPiece];
+
     m_boardState.allPieces = m_boardState.whitePieces | m_boardState.blackPieces;
 }
 
@@ -729,6 +734,9 @@ void Board::MakeEnPassantMove(const Move& move)
 
     m_boardState.allPieces ^= (move.fromPos | move.toPos | enemySquare);
     m_boardState.enPassantSquare = 0ull;
+
+    // Subtract the value of the piece that was captured
+    m_boardState.pieceValueScore -= PieceValueArray[enemyPawn];
 }
 
 template<bool isWhite>
@@ -760,6 +768,7 @@ void Board::MakePromotionMove(const Move& move)
     int32 fromIdx = GetIndex(move.fromPos);
     int32 toIdx   = GetIndex(move.toPos);
 
+    Piece promotionPiece = Piece::NoPiece;
     if constexpr (isWhite)
     {
         m_pieces[Piece::wPawn] ^= move.fromPos;
@@ -771,20 +780,16 @@ void Board::MakePromotionMove(const Move& move)
         switch (move.flags)
         {
             case(MoveFlags::QueenPromotion):
-                m_pieces[Piece::wQueen]  |= move.toPos;
-                m_boardState.zobristKey ^= m_ppZobristArray[Piece::wQueen][toIdx];
+                promotionPiece = Piece::wQueen;
                 break;
             case(MoveFlags::KnightPromotion):
-                m_pieces[Piece::wKnight] |= move.toPos;
-                m_boardState.zobristKey ^= m_ppZobristArray[Piece::wKnight][toIdx];
+                promotionPiece = Piece::wKnight;
                 break;
             case(MoveFlags::RookPromotion):
-                m_pieces[Piece::wRook]   |= move.toPos;
-                m_boardState.zobristKey ^= m_ppZobristArray[Piece::wRook][toIdx];
+                promotionPiece = Piece::wRook;
                 break;
             case(MoveFlags::BishopPromotion):
-                m_pieces[Piece::wBishop] |= move.toPos;
-                m_boardState.zobristKey ^= m_ppZobristArray[Piece::wBishop][toIdx];
+                promotionPiece = Piece::wBishop;
                 break;
             default:
                 CH_ASSERT(false);
@@ -801,25 +806,28 @@ void Board::MakePromotionMove(const Move& move)
         switch (move.flags)
         {
             case(MoveFlags::QueenPromotion):
-                m_pieces[Piece::bQueen]  |= move.toPos;
-                m_boardState.zobristKey ^= m_ppZobristArray[Piece::bQueen][toIdx];
+                promotionPiece = Piece::bQueen;
                 break;
             case(MoveFlags::KnightPromotion):
-                m_pieces[Piece::bKnight] |= move.toPos;
-                m_boardState.zobristKey ^= m_ppZobristArray[Piece::bKnight][toIdx];
+                promotionPiece = Piece::bKnight;
                 break;
             case(MoveFlags::RookPromotion):
-                m_pieces[Piece::bRook]   |= move.toPos;
-                m_boardState.zobristKey ^= m_ppZobristArray[Piece::bRook][toIdx];
+                promotionPiece = Piece::bRook;
                 break;
             case(MoveFlags::BishopPromotion):
-                m_pieces[Piece::bBishop] |= move.toPos;
-                m_boardState.zobristKey ^= m_ppZobristArray[Piece::bBishop][toIdx];
+                promotionPiece = Piece::bBishop;
                 break;
             default:
                 CH_ASSERT(false);
         }
     }
+
+    m_pieces[promotionPiece] |= move.toPos;
+    m_boardState.zobristKey ^= m_ppZobristArray[promotionPiece][toIdx];
+
+    m_boardState.pieceValueScore -= PieceValueArray[move.fromPiece];
+    m_boardState.pieceValueScore -= PieceValueArray[move.toPiece];
+    m_boardState.pieceValueScore += PieceValueArray[promotionPiece];
 
     UpdateCastleFlags<isWhite>(move);
     m_pieces[move.toPiece] ^= move.toPos;
@@ -836,6 +844,7 @@ void Board::MakePromotionMove(const Move& move)
 template<bool isWhite>
 int32 Board::ScoreBoard()
 {
+    /*
     int32 score = 0;
 
     score += QueenScore  * (PopCount(WQueen())  - PopCount(BQueen()));
@@ -843,8 +852,9 @@ int32 Board::ScoreBoard()
     score += BishopScore * (PopCount(WBishop()) - PopCount(BBishop()));
     score += KnightScore * (PopCount(WKnight()) - PopCount(BKnight()));
     score += PawnScore   * (PopCount(WPawn())   - PopCount(BPawn()));
-
+    */
     constexpr int32 multFactor = (isWhite) ? 1 : -1;
+    int32 score = m_boardState.pieceValueScore;
     score *= multFactor;
 
     return score;
@@ -929,4 +939,17 @@ void Board::ResetZobKey()
         CH_ASSERT(m_boardState.zobristKey == key);
     }
     m_boardState.zobristKey = key;
+}
+
+void Board::ResetPieceScore()
+{
+    int32 score = 0;
+
+    score += QueenScore * (PopCount(WQueen()) - PopCount(BQueen()));
+    score += RookScore * (PopCount(WRook()) - PopCount(BRook()));
+    score += BishopScore * (PopCount(WBishop()) - PopCount(BBishop()));
+    score += KnightScore * (PopCount(WKnight()) - PopCount(BKnight()));
+    score += PawnScore * (PopCount(WPawn()) - PopCount(BPawn()));
+
+    m_boardState.pieceValueScore = score;
 }

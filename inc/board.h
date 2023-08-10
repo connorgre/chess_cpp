@@ -35,6 +35,23 @@ enum PieceScores : int32
 
 };
 
+                                      // white scores
+constexpr int32 PieceValueArray[] = { PieceScores::KingScore,
+                                      PieceScores::QueenScore,
+                                      PieceScores::RookScore,
+                                      PieceScores::KnightScore,
+                                      PieceScores::BishopScore,
+                                      PieceScores::PawnScore,
+                                      // black scores (whitescores * -1).
+                                 -1 * PieceScores::KingScore,
+                                 -1 * PieceScores::QueenScore,
+                                 -1 * PieceScores::RookScore,
+                                 -1 * PieceScores::KnightScore,
+                                 -1 * PieceScores::BishopScore,
+                                 -1 * PieceScores::PawnScore,
+                                      //NoMove score
+                                      0 };
+
 enum MoveTypes : uint32
 {
     Best   = 0,
@@ -152,6 +169,8 @@ struct BoardInfo
     bool checkAndPinMasksValid;
 
     bool illegalKingMovesValid;
+
+    int32 pieceValueScore;
 };
 
 class Board
@@ -245,6 +264,9 @@ public:
     void InvalidateCheckPinAndIllegalMoves() { m_boardState.illegalKingMovesValid = false;
                                                m_boardState.checkAndPinMasksValid = false;};
 private:
+
+    void ResetPieceScore();
+
     template<bool isWhite>
     void MakeNormalMove(const Move& move);
 
