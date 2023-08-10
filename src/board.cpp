@@ -413,7 +413,7 @@ void Board::MakeMove(const Move& move)
 
     // These aren't valid anymore
     m_boardState.checkAndPinMasksValid = false;
-    m_boardState.illegalKingMoveMask = false;
+    m_boardState.illegalKingMovesValid = false;
 
     // Take out EP zobrist
     if (m_boardState.enPassantSquare != 0ull)

@@ -253,9 +253,15 @@ bool Board::IsMoveLegal(const Move& move)
 // Generates all legal moves.  I should probably relax king 'seenSquares' rules, and only check
 // those on the first king move.  This should avoid the most expensive part of the check.
 template<bool isWhite, bool onlyCaptures>
-void Board::GenerateLegalMoves(Move* pCaptureList, Move* pNormalList, uint32* pNumCapture, uint32* pNumNormal)
+void Board::GenerateLegalMoves(Move** ppMoveList, uint32* pNumMoves)
 {
     GenerateCheckAndPinMask<isWhite>();
+
+    Move* pCaptureList = ppMoveList[MoveTypes::Attack];
+    Move* pNormalList  = ppMoveList[MoveTypes::Normal];
+
+    uint32 numCaptures = 0;
+    uint32 numNormal   = 0;
 
     // If we're in a double check, then we can only move the king.  Don't bother generating the
     // rest of the moves
@@ -264,16 +270,16 @@ void Board::GenerateLegalMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
         // need to move this further out
         if (m_boardState.enPassantSquare != 0ull)
         {
-            GeneratePieceMoves<wPawn, isWhite, true, onlyCaptures>(pCaptureList, pNormalList, pNumCapture, pNumNormal);
+            GeneratePieceMoves<wPawn, isWhite, true, onlyCaptures>(pCaptureList, pNormalList, &numCaptures, &numNormal);
         }
         else
         {
-            GeneratePieceMoves<wPawn,   isWhite, false, onlyCaptures>(pCaptureList, pNormalList, pNumCapture, pNumNormal);
+            GeneratePieceMoves<wPawn,   isWhite, false, onlyCaptures>(pCaptureList, pNormalList, &numCaptures, &numNormal);
         }
-        GeneratePieceMoves<wKnight, isWhite, false, onlyCaptures>(pCaptureList, pNormalList, pNumCapture, pNumNormal);
-        GeneratePieceMoves<wBishop, isWhite, false, onlyCaptures>(pCaptureList, pNormalList, pNumCapture, pNumNormal);
-        GeneratePieceMoves<wRook,   isWhite, false, onlyCaptures>(pCaptureList, pNormalList, pNumCapture, pNumNormal);
-        GeneratePieceMoves<wQueen,  isWhite, false, onlyCaptures>(pCaptureList, pNormalList, pNumCapture, pNumNormal);
+        GeneratePieceMoves<wKnight, isWhite, false, onlyCaptures>(pCaptureList, pNormalList, &numCaptures, &numNormal);
+        GeneratePieceMoves<wBishop, isWhite, false, onlyCaptures>(pCaptureList, pNormalList, &numCaptures, &numNormal);
+        GeneratePieceMoves<wRook,   isWhite, false, onlyCaptures>(pCaptureList, pNormalList, &numCaptures, &numNormal);
+        GeneratePieceMoves<wQueen,  isWhite, false, onlyCaptures>(pCaptureList, pNormalList, &numCaptures, &numNormal);
     }
     // If we are in check, then we generate all legal moves, not only captures
     else if (m_boardState.numPiecesChecking == 1)
@@ -281,27 +287,36 @@ void Board::GenerateLegalMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
         // need to move this further out
         if (m_boardState.enPassantSquare != 0ull)
         {
-            GeneratePieceMoves<wPawn, isWhite, true, false>(pCaptureList, pNormalList, pNumCapture, pNumNormal);
+            GeneratePieceMoves<wPawn, isWhite, true, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
         }
         else
         {
-            GeneratePieceMoves<wPawn, isWhite, false, false>(pCaptureList, pNormalList, pNumCapture, pNumNormal);
+            GeneratePieceMoves<wPawn, isWhite, false, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
         }
-        GeneratePieceMoves<wKnight, isWhite, false, false>(pCaptureList, pNormalList, pNumCapture, pNumNormal);
-        GeneratePieceMoves<wBishop, isWhite, false, false>(pCaptureList, pNormalList, pNumCapture, pNumNormal);
-        GeneratePieceMoves<wRook,   isWhite, false, false>(pCaptureList, pNormalList, pNumCapture, pNumNormal);
-        GeneratePieceMoves<wQueen,  isWhite, false, false>(pCaptureList, pNormalList, pNumCapture, pNumNormal);
+        GeneratePieceMoves<wKnight, isWhite, false, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
+        GeneratePieceMoves<wBishop, isWhite, false, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
+        GeneratePieceMoves<wRook,   isWhite, false, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
+        GeneratePieceMoves<wQueen,  isWhite, false, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
     }
 
-    GeneratePieceMoves<wKing, isWhite, false, onlyCaptures>(pCaptureList, pNormalList, pNumCapture, pNumNormal);
+    GeneratePieceMoves<wKing, isWhite, false, onlyCaptures>(pCaptureList, pNormalList, &numCaptures, &numNormal);
 
+    ppMoveList[MoveTypes::Best][0].fromPiece             = Piece::EndOfMoveList;
+    ppMoveList[MoveTypes::Attack][numCaptures].fromPiece = Piece::EndOfMoveList;
+    ppMoveList[MoveTypes::Killer][0].fromPiece           = Piece::EndOfMoveList;
+    ppMoveList[MoveTypes::Normal][numNormal].fromPiece   = Piece::EndOfMoveList;
+
+    if (pNumMoves != nullptr)
+    {
+        *pNumMoves = numCaptures + numNormal;
+    }
 }
 
 //=================================================================================================
-template void Board::GenerateLegalMoves<true, true>(Move* pCaptureList, Move* pNormalList, uint32* pNumCapture, uint32* pNumNormal);
-template void Board::GenerateLegalMoves<false, true>(Move* pCaptureList, Move* pNormalList, uint32* pNumCapture, uint32* pNumNormal);
-template void Board::GenerateLegalMoves<true, false>(Move* pCaptureList, Move* pNormalList, uint32* pNumCapture, uint32* pNumNormal);
-template void Board::GenerateLegalMoves<false, false>(Move* pCaptureList, Move* pNormalList, uint32* pNumCapture, uint32* pNumNormal);
+template void Board::GenerateLegalMoves<true, true>(Move** ppMoveList, uint32* pNumMoves);
+template void Board::GenerateLegalMoves<false, true>(Move** ppMoveList, uint32* pNumMoves);
+template void Board::GenerateLegalMoves<true, false>(Move** ppMoveList, uint32* pNumMoves);
+template void Board::GenerateLegalMoves<false, false>(Move** ppMoveList, uint32* pNumMoves);
 //=================================================================================================
 
 template<Piece pieceType, bool isWhite, bool hasEnPassant, bool onlyCaptures>
@@ -410,14 +425,21 @@ void Board::GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
 
                 uint64 flag = GetLSB(castleFlags);
                 castleFlags ^= flag;
-                pNormalList[*pNumNormal].flags = flag;
-                pNormalList[*pNumNormal].score = CastleScore;
-                (*pNumNormal) += (flag == 0ull) ? 0 : 1;
+                if (flag != 0ull)
+                {
+                    pNormalList[*pNumNormal].flags     = flag;
+                    pNormalList[*pNumNormal].score     = CastleScore;
+                    pNormalList[*pNumNormal].fromPiece = pieceType;
+                    *pNumNormal += 1;
 
-                pNormalList[*pNumNormal].flags = castleFlags;
-                pNormalList[*pNumNormal].score = CastleScore;
-
-                (*pNumNormal) += (castleFlags == 0ull) ? 0 : 1;
+                    if (castleFlags != 0ull)
+                    {
+                        pNormalList[*pNumNormal].flags = castleFlags;
+                        pNormalList[*pNumNormal].score = CastleScore;
+                        pNormalList[*pNumNormal].fromPiece = pieceType;
+                        *pNumNormal += 1;
+                    }
+                }
             }
 
             while (moves != 0ull)

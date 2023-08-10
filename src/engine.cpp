@@ -20,14 +20,29 @@ ChessEngine::~ChessEngine()
 void ChessEngine::Init(Board* pBoard)
 {
     m_pBoard = pBoard;
-    m_pppMoveLists = static_cast<Move***>(malloc(sizeof(Move**) * MaxEngineDepth));
+    m_pppMoveLists = new Move** [MaxEngineDepth];
 
     for (uint32 i = 0; i < MaxEngineDepth; i++)
     {
-        m_pppMoveLists[i] = static_cast<Move**>(malloc(sizeof(Move*) * MoveTypes::MoveTypeCount));
-        for (uint32 j = 0; j < MoveTypes::MoveTypeCount; j++)
+        m_pppMoveLists[i] = new Move* [MoveTypes::MoveTypeCount];
+
+        m_pppMoveLists[i][MoveTypes::Best]   = new Move [NumBestMoves + 1];
+        static_assert(NumBestMoves == 1);
+        m_pppMoveLists[i][MoveTypes::Best][0].fromPiece = Piece::EndOfMoveList;
+        m_pppMoveLists[i][MoveTypes::Best][1].fromPiece = Piece::EndOfMoveList;
+
+        m_pppMoveLists[i][MoveTypes::Killer] = new Move [NumKillerMoves + 1];
+        static_assert(NumKillerMoves == 2);
+        m_pppMoveLists[i][MoveTypes::Killer][0].fromPiece = Piece::EndOfMoveList;
+        m_pppMoveLists[i][MoveTypes::Killer][1].fromPiece = Piece::EndOfMoveList;
+        m_pppMoveLists[i][MoveTypes::Killer][2].fromPiece = Piece::EndOfMoveList;
+
+        m_pppMoveLists[i][MoveTypes::Attack] = new Move [MaxMovesPerPosition];
+        m_pppMoveLists[i][MoveTypes::Normal] = new Move [MaxMovesPerPosition];
+        for (uint32 j = 0; j < MaxMovesPerPosition; j++)
         {
-            m_pppMoveLists[i][j] = static_cast<Move*>(malloc(sizeof(Move) * MaxMovesPerPosition));
+            m_pppMoveLists[i][Attack][j].fromPiece = Piece::EndOfMoveList;
+            m_pppMoveLists[i][Normal][j].fromPiece = Piece::EndOfMoveList;
         }
     }
     m_mainSearchTransTable.Init(MainTransTableSize);
@@ -40,11 +55,12 @@ void ChessEngine::Destroy()
     {
         for (uint32 j = 0; j < MoveTypes::MoveTypeCount; j++)
         {
-            free(m_pppMoveLists[i][j]);
+            delete[] m_pppMoveLists[i][j];
         }
-        free(m_pppMoveLists[i]);
+        delete[] m_pppMoveLists[i];
     }
-    free(m_pppMoveLists);
+    delete[] m_pppMoveLists;
+
     m_pppMoveLists = nullptr;
     m_mainSearchTransTable.Destroy();
     m_qSearchTransTable.Destroy();
@@ -177,17 +193,12 @@ void ChessEngine::DoPerft(uint32 depth, bool isWhite, bool expanded)
 template<bool isWhite>
 uint32 ChessEngine::Perft(uint32 depth, uint32 ply)
 {
-    Move* pCaptureList = &(m_pppMoveLists[ply][MoveTypes::Attack][0]);
-    uint32 numCaptures = 0;
-    Move* pNormalList = &(m_pppMoveLists[ply][MoveTypes::Normal][0]);
-    uint32 numNormal = 0;
+    Move** ppMoveList = m_pppMoveLists[ply];
 
-    m_pBoard->GenerateLegalMoves<isWhite, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
-    //SortMoves(pCaptureList, numCaptures);
+    uint32 numMoves = 0;
 
-    const uint32 numMoves = numCaptures + numNormal;
-    Move* pMoveList = pCaptureList;
-    uint32 idxSubtractVal = 0;
+    m_pBoard->InvalidateCheckPinAndIllegalMoves();
+    m_pBoard->GenerateLegalMoves<isWhite, false>(ppMoveList, &numMoves);
 
     // We've generated the moves all the moves for the last layer already, no reason to actually count them.
     if (depth <= 1)
@@ -196,24 +207,22 @@ uint32 ChessEngine::Perft(uint32 depth, uint32 ply)
         return 0;
     }
 
-    BoardInfo prevBoardData = {};
-    m_pBoard->CopyBoardData(&prevBoardData);
 
+    GetNextMoveData nextMoveData = InitGetNextMoveData();
+    Move            curMove      = GetNextMove(ppMoveList, &nextMoveData);
+
+    BoardInfo prevBoardData = {};
     uint64 prevBoardPieces[static_cast<uint32>(Piece::PieceCount)];
+    m_pBoard->CopyBoardData(&prevBoardData);
     m_pBoard->CopyPieceData(&(prevBoardPieces[0]));
 
-    for (uint32 moveIdx = 0; moveIdx < numMoves; moveIdx++)
+    while (curMove.fromPiece != Piece::EndOfMoveList)
     {
-        if (moveIdx == numCaptures)
-        {
-            pMoveList = pNormalList;
-            idxSubtractVal = numCaptures;
-        }
-        const Move move = pMoveList[moveIdx - idxSubtractVal];
-
-        m_pBoard->MakeMove<isWhite>(move);
+        m_pBoard->MakeMove<isWhite>(curMove);
         Perft<!isWhite>(depth-1, ply+1);
         m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
+
+        curMove = GetNextMove(ppMoveList, &nextMoveData);
     }
 
     return 0;
@@ -222,40 +231,35 @@ uint32 ChessEngine::Perft(uint32 depth, uint32 ply)
 template<bool isWhite>
 void ChessEngine::PerftExpanded(uint32 depth)
 {
-    Move* pCaptureList = &(m_pppMoveLists[0][MoveTypes::Attack][0]);
-    uint32 numCaptures = 0;
-    Move* pNormalList = &(m_pppMoveLists[0][MoveTypes::Normal][0]);
-    uint32 numNormal = 0;
-
-    m_pBoard->GenerateLegalMoves<isWhite, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
-
-    const uint32 numMoves = numCaptures + numNormal;
-    Move* pMoveList = pCaptureList;
-    uint32 idxSubtractVal = 0;
+    Move** ppMoveList = m_pppMoveLists[0];
+    m_pBoard->InvalidateCheckPinAndIllegalMoves();
+    m_pBoard->GenerateLegalMoves<isWhite, false>(ppMoveList);
 
     BoardInfo prevBoardData = {};
-    m_pBoard->CopyBoardData(&prevBoardData);
-
     uint64 prevBoardPieces[static_cast<uint32>(Piece::PieceCount)];
+    m_pBoard->CopyBoardData(&prevBoardData);
     m_pBoard->CopyPieceData(&(prevBoardPieces[0]));
-
 
     uint32 prevNumMoves = 0;
     std::string prevMoveStr = "00";
-    for (uint32 moveIdx = 0; moveIdx < numMoves; moveIdx++)
-    {
-        if (moveIdx == numCaptures)
-        {
-            pMoveList = pNormalList;
-            idxSubtractVal = numCaptures;
-        }
-        const Move move = pMoveList[moveIdx - idxSubtractVal];
 
-        m_pBoard->MakeMove<isWhite>(move);
-        Perft<!isWhite>(depth - 1, 1);
+    GetNextMoveData nextMoveData = InitGetNextMoveData();
+    Move            curMove      = GetNextMove(ppMoveList, &nextMoveData);
+
+    while (curMove.fromPiece != Piece::EndOfMoveList)
+    {
+        m_pBoard->MakeMove<isWhite>(curMove);
+        if (depth > 1)
+        {
+            Perft<!isWhite>(depth - 1, 1);
+        }
+        else
+        {
+            m_searchValues.positionsSearched++;
+        }
         m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
 
-        std::string moveStr = m_pBoard->GetStringFromMove(move);
+        std::string moveStr = m_pBoard->GetStringFromMove(curMove);
 
         // print newline after each piece
         if ((prevMoveStr[0] != moveStr[0]) || (prevMoveStr[1] != moveStr[1]))
@@ -265,6 +269,8 @@ void ChessEngine::PerftExpanded(uint32 depth)
         prevMoveStr = moveStr;
         std::cout << moveStr << ": " << m_searchValues.positionsSearched - prevNumMoves << std::endl;
         prevNumMoves = m_searchValues.positionsSearched;
+
+        curMove = GetNextMove(ppMoveList, &nextMoveData);
     }
 }
 
@@ -316,8 +322,8 @@ int32 ChessEngine::Negmax(
     int32          beta, 
     SearchSettings settings)
 {
+    m_pBoard->InvalidateCheckPinAndIllegalMoves();
     m_searchValues.positionsSearched++;
-    constexpr int32 scoreMultiplier = (isWhite) ? 1 : -1;
     if constexpr (onPlyZero)
     {
         pBestMove->score = NegCheckMateScore;
@@ -326,8 +332,6 @@ int32 ChessEngine::Negmax(
     if ((depth <= 0) || (ply == MaxEngineDepth))
     {
         int32 score = QuiscenceSearch<isWhite>(ply, alpha, beta);
-        //int32 score = m_pBoard->ScoreBoard();
-        //score *= scoreMultiplier;
         return score;
     }
     m_searchValues.normalSearched++;
@@ -374,7 +378,7 @@ int32 ChessEngine::Negmax(
 
     const bool canExtendedFutilityPrune = (settings.extendedFutilityPrune) &&
                                           (settings.onPv == false)         &&
-                                          (depth == 2)                           &&
+                                          (depth == 2)                     &&
                                           (inCheck == false);
     if (canExtendedFutilityPrune)
     {
@@ -421,32 +425,16 @@ int32 ChessEngine::Negmax(
         settings.nullMovePrune = true;
     }
 
-    Move* pCaptureList = &(m_pppMoveLists[ply][MoveTypes::Attack][0]);
-    uint32 numCaptures = 0;
-    Move* pNormalList = &(m_pppMoveLists[ply][MoveTypes::Normal][0]);
-    uint32 numNormal = 0;
+    Move** ppMoveList  = m_pppMoveLists[ply];
 
-    // sneak the tt move onto the front of pCaptureList
+    m_pBoard->GenerateLegalMoves<isWhite, false>(ppMoveList);
+    GetNextMoveData nextMoveData = InitGetNextMoveData();
+
+    // Need to do this after GenerateLegalMoves, since it puts invalidPiece in the spot
     if (ttMoveValid)
     {
-        pCaptureList[0] = ttMove;
-        pCaptureList++;
+        ppMoveList[MoveTypes::Best][0] = ttMove;
     }
-
-    m_pBoard->GenerateLegalMoves<isWhite, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
-    SortMoves(pCaptureList, numCaptures);
-
-    // sneak the tt move onto the front of pCaptureList
-    if (ttMoveValid)
-    {
-        pCaptureList--;
-        numCaptures++;
-    }
-
-    const uint32 numMoves = numCaptures + numNormal;
-    Move* pMoveList = pCaptureList;
-    uint32 idxSubtractVal = 0;
-
 
     const bool canDoMultiCut = (settings.onPv == false) &&
                                (settings.multiCutPrune == true) &&
@@ -454,19 +442,16 @@ int32 ChessEngine::Negmax(
                                (depth > settings.mulitCutDepth + 1);
     if (canDoMultiCut)
     {
-        uint32 numBetaCutoffs = 0;
+        uint32 numBetaCutoffs  = 0;
         settings.multiCutPrune = false;
-        uint32 numMultiCutMoves = (settings.multiCutMoves < numMoves) ? settings.multiCutMoves :
-                                                                        numMoves;
-        for (uint32 moveIdx = 0; moveIdx < numMoves; moveIdx++)
+        uint32 numMovesDone    = 0;
+
+        Move curMove           = GetNextMove(ppMoveList, &nextMoveData);
+
+        while((curMove.fromPiece != Piece::EndOfMoveList) && (numMovesDone < settings.multiCutMoves))
         {
-            if (moveIdx == numCaptures)
-            {
-                pMoveList = pNormalList;
-                idxSubtractVal = numCaptures;
-            }
-            const Move move = pMoveList[moveIdx - idxSubtractVal];
-            m_pBoard->MakeMove<isWhite>(move);
+            numMovesDone++;
+            m_pBoard->MakeMove<isWhite>(curMove);
 
             int32 multiCutMoveScore = Negmax<!isWhite, false>(depth - settings.mulitCutDepth,
                                                               ply + 1,
@@ -486,29 +471,21 @@ int32 ChessEngine::Negmax(
                     return beta;
                 }
             }
-
+            curMove = GetNextMove(ppMoveList, &nextMoveData);
         }
         settings.multiCutPrune = true;
     }
 
     int32 bestScore = NegCheckMateScore + ply;
+    Move  bestMove  = {};
 
-    Move bestMove = pCaptureList[0];
-    bestMove.score = bestScore;
+    nextMoveData.moveIdx = 0;
+    nextMoveData.moveType = MoveTypes::Best;
+    Move      curMove  = GetNextMove(ppMoveList, &nextMoveData);
 
-    // reset these in case they got changed in the pruning searches
-    pMoveList = pCaptureList;
-    idxSubtractVal = 0;
-
-    for (uint32 moveIdx = 0; moveIdx < numMoves; moveIdx++)
+    while (curMove.fromPiece != Piece::EndOfMoveList)
     {
-        if (moveIdx == numCaptures)
-        {
-            pMoveList = pNormalList;
-            idxSubtractVal = numCaptures;
-        }
-        const Move move = pMoveList[moveIdx - idxSubtractVal];
-        m_pBoard->MakeMove<isWhite>(move);
+        m_pBoard->MakeMove<isWhite>(curMove);
 
         int32 moveScore = Negmax<!isWhite, false>(depth - 1, 
                                                   ply + 1,
@@ -518,15 +495,14 @@ int32 ChessEngine::Negmax(
                                                   settings);
         // Flip the sign since this is negmax
         moveScore *= -1;
+        m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
 
         if (bestScore < moveScore)
         {
-            bestMove       = move;
+            bestMove       = curMove;
             bestMove.score = moveScore;
             bestScore      = moveScore;
         }
-
-        m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
 
         settings.onPv = false;
 
@@ -541,6 +517,8 @@ int32 ChessEngine::Negmax(
             ttScoreType = TTScoreType::UpperBound;
             break;
         }
+
+        curMove = GetNextMove(ppMoveList, &nextMoveData);
     }
 
     if constexpr (onPlyZero)
@@ -561,6 +539,7 @@ template int32 ChessEngine::Negmax<false, false>(uint32 depth, uint32 ply, Move*
 template<bool isWhite>
 int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
 {
+    m_pBoard->InvalidateCheckPinAndIllegalMoves();
     m_searchValues.positionsSearched++;
     m_searchValues.quiscenceSearched++;
 
@@ -600,17 +579,9 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
         return ttMove.score;
     }
 
-    Move* pCaptureList = &(m_pppMoveLists[ply][MoveTypes::Attack][0]);
-    uint32 numCaptures = 0;
-    Move* pNormalList = &(m_pppMoveLists[ply][MoveTypes::Normal][0]);
-    uint32 numNormal = 0;
+    Move** ppMoveList = m_pppMoveLists[ply];
 
-    m_pBoard->GenerateLegalMoves<isWhite, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
-    SortMoves(pCaptureList, numCaptures);
-
-    const uint32 numMoves = numCaptures + numNormal;
-    Move* pMoveList = pCaptureList;
-    uint32 idxSubtractVal = 0;
+    m_pBoard->GenerateLegalMoves<isWhite, false>(ppMoveList);
 
     const bool inCheck = m_pBoard->InCheck();
 
@@ -630,20 +601,16 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
     }
 
     bool didMove = false;
-    for (uint32 moveIdx = 0; moveIdx < numMoves; moveIdx++)
+    GetNextMoveData nextMoveData = InitGetNextMoveData();
+    Move            curMove      = GetNextMove(ppMoveList, &nextMoveData);
+    while (curMove.fromPiece != Piece::EndOfMoveList)
     {
-        if (moveIdx == numCaptures)
-        {
-            pMoveList = pNormalList;
-            idxSubtractVal = numCaptures;
-        }
-        const Move move = pMoveList[moveIdx - idxSubtractVal];
         // Once we're just capturing pawns, break out.
-        if (IsMoveGoodForQsearch(move, inCheck) == false)
+        if (IsMoveGoodForQsearch(curMove, inCheck) == false)
         {
             break;
         }
-        m_pBoard->MakeMove<isWhite>(move);
+        m_pBoard->MakeMove<isWhite>(curMove);
         didMove = true;
         int32 moveScore = QuiscenceSearch<!isWhite>(ply + 1, beta * -1, alpha * -1);
         // Flip the sign since this is negmax
@@ -656,7 +623,7 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
         if (bestScore > alpha)
         {
             ttScoreType = TTScoreType::Exact;
-            bestMove = move;
+            bestMove = curMove;
             bestMove.score = bestScore;
             alpha = bestScore;
         }
@@ -666,6 +633,7 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
             ttScoreType = TTScoreType::UpperBound;
             break;
         }
+        curMove = GetNextMove(ppMoveList, &nextMoveData);
     }
 
     if (didMove)
@@ -719,23 +687,27 @@ void SwapMoves(Move* pMoveList, int32 idx1, int32 idx2)
     pMoveList[idx2] = tempMove;
 }
 
-void SortMoves(Move* pMoveList, uint32 numMoves)
+// Sort them using a simple in place insertion sort.
+void SortMoves(Move* pMoveList)
 {
-    // Then sort them using a simple in place insertion sort.
-    for (uint32 i = 0; i < numMoves; i++)
+    uint32 i = 0;
+    while (pMoveList[i].fromPiece != Piece::EndOfMoveList)
     {
         uint32 minIdx = i;
-        for (uint32 j = i+1; j < numMoves; j++)
+        uint32 j = i + 1;
+        while (pMoveList[j].fromPiece != Piece::EndOfMoveList)
         {
             if (pMoveList[j].score < pMoveList[minIdx].score)
             {
                 minIdx = j;
             }
+            j++;
         }
         if (minIdx != i)
         {
             SwapMoves(pMoveList, i, minIdx);
         }
+        i++;
     }
 }
 
@@ -744,4 +716,57 @@ bool ChessEngine::IsMoveGoodForQsearch(const Move& move, bool inCheck)
     // don't check pawn captures in Qsearch.
     constexpr int32 cutoffScore = MVVLVA_arr[wKing][wPawn];
     return (move.score < cutoffScore) || inCheck;
+}
+
+// Gets the next move.  Should initialize pMoveIdx and pMoveType to 0 and Best outside this function.
+// This will sort the moves as needed.
+Move GetNextMove(Move** ppMoveList, GetNextMoveData* pData)
+{
+    Move curMove = ppMoveList[pData->moveType][pData->moveIdx];
+    while (curMove.fromPiece == Piece::EndOfMoveList)
+    {
+        pData->moveIdx = 0;
+        switch (pData->moveType)
+        {
+            case(MoveTypes::Best):
+                // Sort Attacking moves as needed
+                if (pData->sortedAttacks == false)
+                {
+                    SortMoves(&(ppMoveList[MoveTypes::Attack][0]));
+                }
+                pData->moveType = MoveTypes::Attack;
+                break;
+            case(MoveTypes::Attack):
+                pData->moveType = MoveTypes::Killer;
+                break;
+            case(MoveTypes::Killer):
+                pData->moveType = MoveTypes::Normal;
+                break;
+            case(MoveTypes::Normal):
+                pData->moveType = MoveTypes::MoveTypeCount;
+                break;
+            default:
+                break;
+        }
+        if (pData->moveType != MoveTypes::MoveTypeCount)
+        {
+            curMove = ppMoveList[pData->moveType][pData->moveIdx];
+        }
+        else
+        {
+            break;
+        }
+    }
+    pData->moveIdx++;
+    return curMove;
+}
+
+GetNextMoveData InitGetNextMoveData()
+{
+    GetNextMoveData data = {};
+    data.moveIdx       = 0;
+    data.moveIdx       = MoveTypes::Best;
+    data.sortedAttacks = false;
+
+    return data;
 }

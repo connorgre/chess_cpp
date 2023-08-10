@@ -31,6 +31,16 @@ constexpr uint32 QSearchTransTableSize = 999983; // 999983;
 
 constexpr int32 CastleScore = -10;
 
+constexpr uint32 NumBestMoves   = 1;
+constexpr uint32 NumKillerMoves = 2;
+
+struct GetNextMoveData
+{
+    uint32    moveIdx;
+    MoveTypes moveType;
+    bool      sortedAttacks;
+};
+
 struct SearchSettings
 {
     bool   onPv;                    //> Principle Variation doesn't have any pruning
@@ -54,6 +64,8 @@ struct SearchSettings
     uint32 multiCutMoves;           //  the number of beta cutoffs >= multiCutThreshold, then
     uint32 multiCutThreshold;       //  return beta
     uint32 mulitCutDepth;
+
+
 };
 
 class ChessEngine
@@ -107,6 +119,7 @@ private:
         uint64  futilityCutoffs;
         uint64  extendedFutilityCutoffs;
         uint64  multiCutCutoffs;
+        uint64  lateMoveCutoffs;
     } m_searchValues;
 
     bool IsMoveGoodForQsearch(const Move& move, bool inCheck);
@@ -114,5 +127,7 @@ private:
     std::string ConvertScoreToStr(int32 score);
 };
 
-void SortMoves(Move* pMoveList, uint32 numMoves);
+void SortMoves(Move* pMoveList);
 int32 ScoreMoveMVVLVA(const Move& move);
+Move GetNextMove(Move** ppMoveList, GetNextMoveData* pData);
+GetNextMoveData InitGetNextMoveData();

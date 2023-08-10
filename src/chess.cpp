@@ -461,6 +461,8 @@ Result ChessGame::ParseResetCommand(
     Result result = Result::Success;
     uint32 vecLen = wordVec.size();
     pInputCommand->reset.isTTReset = false;
+
+    // https://www.chess.com/analysis?tab=analysis
     if (vecLen == 1)
     {
         char fenStr[] = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -";
@@ -476,6 +478,12 @@ Result ChessGame::ParseResetCommand(
         else if (wordVec[1] == "1")
         {
             char fenStr[] = "3qkr/3pp1/6P/7B/8/8/P7/K7 b - -";
+            memcpy(pInputCommand->reset.fenStr, fenStr, sizeof(fenStr));
+        }
+        else if (wordVec[1] == "2")
+        {
+            // stockfish says -.9, correct move is a6e1
+            char fenStr[] = "r4rk1/p4ppp/Bppp2n1/7q/4bP2/6P1/PPPQ3P/R1B2RK1 w -";
             memcpy(pInputCommand->reset.fenStr, fenStr, sizeof(fenStr));
         }
         else if ((wordVec[1] == "tt") || (wordVec[1] == "transtable"))

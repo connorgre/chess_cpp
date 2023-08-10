@@ -4,23 +4,24 @@
 
 enum Piece : uint32
 {
-    wKing = 0,
-    wQueen = 1,
-    wRook = 2,
-    wKnight = 3,
-    wBishop = 4,
-    wPawn = 5,
+    wKing         = 0,
+    wQueen        = 1,
+    wRook         = 2,
+    wKnight       = 3,
+    wBishop       = 4,
+    wPawn         = 5,
 
-    bKing = 6,
-    bQueen = 7,
-    bRook = 8,
-    bKnight = 9,
-    bBishop = 10,
-    bPawn = 11,
+    bKing         = 6,
+    bQueen        = 7,
+    bRook         = 8,
+    bKnight       = 9,
+    bBishop       = 10,
+    bPawn         = 11,
 
-    NoPiece = 12,
+    NoPiece       = 12,
 
-    PieceCount = 13,
+    PieceCount    = 13,
+    EndOfMoveList = 14,
 };
 
 enum PieceScores : int32
@@ -36,8 +37,10 @@ enum PieceScores : int32
 
 enum MoveTypes : uint32
 {
-    Attack = 0,
-    Normal = 1,
+    Best   = 0,
+    Attack = 1,
+    Killer = 2,
+    Normal = 3,
 
     MoveTypeCount,
 };
@@ -180,10 +183,10 @@ public:
     template<bool isWhite>
     void GenerateCheckAndPinMask();
 
-    // Gets all the legal moves and puts them in a pre-allocated list of moves.  pNumMoves will
-    // have the number of moves in the moveList
+    // Gets all the legal moves and puts them in a pre-allocated list of moves.  The final move
+    // in each list has Move::fromPiece == EndOfMoveList
     template<bool isWhite, bool onlyCaptures>
-    void GenerateLegalMoves(Move* pCaptureList, Move* pNormalList, uint32* pNumCapture, uint32* pNumNormal);
+    void GenerateLegalMoves(Move** ppMoveList, uint32* pNumMoves = nullptr);
 
     void CopyBoardData(BoardInfo* pBoardInfo) { memcpy(pBoardInfo, &m_boardState, sizeof(BoardInfo)); }
     void CopyPieceData(uint64* pPieceData) { memcpy(pPieceData, &(m_pieces[0]), sizeof(m_pieces)); }
@@ -234,6 +237,9 @@ public:
     bool IsMoveLegal(const Move& move);
 
     uint64 GetZobKey() { return m_boardState.zobristKey; }
+
+    void InvalidateCheckPinAndIllegalMoves() { m_boardState.illegalKingMovesValid = false;
+                                               m_boardState.checkAndPinMasksValid = false;};
 private:
     template<bool isWhite>
     void MakeNormalMove(const Move& move);
