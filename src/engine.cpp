@@ -69,6 +69,7 @@ void ChessEngine::Destroy()
 void ChessEngine::SetupInitialSearchSettings(SearchSettings* pSettings)
 {
     pSettings->onPv                   = true;
+    pSettings->nullWindowSearch       = true;
 
     pSettings->nullMovePrune          = true;
     pSettings->nullMoveDepth          = 3;
@@ -144,15 +145,17 @@ void ChessEngine::DoEngine(uint32 depth, bool isWhite, bool doMove)
     std::cout << "Positions searched : " << m_searchValues.positionsSearched << std::endl;
     std::cout << "Knps               : " << knps << std::endl;
 
-    std::cout << "Normal Searched      : " << m_searchValues.normalSearched << std::endl;
-    std::cout << "Quiscence searched   : " << m_searchValues.quiscenceSearched << std::endl;
-    std::cout << "TransTable hits      : " << m_searchValues.mainTransTableHits << std::endl;
-    std::cout << "QSearch TT hits      : " << m_searchValues.qTransTableHits << std::endl;
-    std::cout << "Null Move Prunes     : " << m_searchValues.nullMoveCutoffs << std::endl;
-    std::cout << "Futility Prunes      : " << m_searchValues.futilityCutoffs << std::endl;
-    std::cout << "Extended Fut. Prunes : " << m_searchValues.extendedFutilityCutoffs << std::endl;
-    std::cout << "MultiCut Prunes      : " << m_searchValues.multiCutCutoffs << std::endl;
-    std::cout << "Late Move Reductions : " << m_searchValues.lateMoveReductions << std::endl;
+    std::cout << "Normal Searched       : " << m_searchValues.normalSearched << std::endl;
+    std::cout << "Quiscence searched    : " << m_searchValues.quiscenceSearched << std::endl;
+    std::cout << "TransTable hits       : " << m_searchValues.mainTransTableHits << std::endl;
+    std::cout << "QSearch TT hits       : " << m_searchValues.qTransTableHits << std::endl;
+    std::cout << "Null Move Prunes      : " << m_searchValues.nullMoveCutoffs << std::endl;
+    std::cout << "Futility Prunes       : " << m_searchValues.futilityCutoffs << std::endl;
+    std::cout << "Extended Fut. Prunes  : " << m_searchValues.extendedFutilityCutoffs << std::endl;
+    std::cout << "MultiCut Prunes       : " << m_searchValues.multiCutCutoffs << std::endl;
+    std::cout << "Late Move Reductions  : " << m_searchValues.lateMoveReductions << std::endl;
+    std::cout << "Null Window ReSearches: " << m_searchValues.nullWindowReSearches << std::endl;
+    std::cout << std::flush;
 }
 
 void ChessEngine::DoPerft(uint32 depth, bool isWhite, bool expanded)
@@ -507,6 +510,9 @@ int32 ChessEngine::Negmax(
 
     uint32 numMoves = 0;
     int32 searchDepth = depth - 1;
+
+    int32 searchBeta = beta;
+    bool doNullWindowSearch = false;
     while (curMove.fromPiece != Piece::EndOfMoveList)
     {
         numMoves++;
@@ -545,11 +551,32 @@ int32 ChessEngine::Negmax(
         int32 moveScore = Negmax<!isWhite, false>(searchDepth, 
                                                   ply + 1,
                                                   nullptr,
-                                                  beta * -1,
-                                                  alpha * -1,
+                                                  searchBeta * -1,
+                                                  alpha      * -1,
                                                   settings);
         // Flip the sign since this is negmax
         moveScore *= -1;
+        if (doNullWindowSearch)
+        {
+            // we need to re-search the move with a full window
+            const bool needReSearch  = (moveScore > alpha) &&
+                                       (moveScore < beta)  &&
+                                       (numMoves  > 0)     &&
+                                       (searchDepth > 0);
+            if (needReSearch)
+            {
+                moveScore = Negmax<!isWhite, false>(searchDepth,
+                                                    ply + 1,
+                                                    nullptr,
+                                                    beta  * -1,
+                                                    alpha * -1,
+                                                    settings);
+                // Flip the sign since this is negmax
+                moveScore *= -1;
+                m_searchValues.nullWindowReSearches++;
+            }
+        }
+
         m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
 
         if (bestScore < moveScore)
@@ -565,12 +592,19 @@ int32 ChessEngine::Negmax(
         {
             alpha = bestScore;
             ttScoreType = TTScoreType::Exact;
+            // wait until alpha increase before doing null window searches.
+            doNullWindowSearch = settings.nullWindowSearch;
         }
 
         if (alpha >= beta)
         {
             ttScoreType = TTScoreType::UpperBound;
             break;
+        }
+
+        if (doNullWindowSearch)
+        {
+            searchBeta = alpha + 1;
         }
 
         curMove = GetNextMove(ppMoveList, &nextMoveData);

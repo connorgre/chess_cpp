@@ -45,7 +45,10 @@ struct SearchSettings
 {
     bool   onPv;                    //> Principle Variation doesn't have any pruning
 
-    bool   expectedCutNode;
+    bool   expectedCutNode;         //> If we expect a beta cutoff (ie should we do multi-cut)
+
+    bool   nullWindowSearch;        //> Search with an alpha beta window of 1, research if we get a
+                                    //  cutoff
 
     bool   nullMovePrune;           //> Prune moves where the other team can't improve their score
                                     //  with a free move on a reduced depth search
@@ -113,6 +116,8 @@ private:
     template<bool isWhite>
     Move IterativeDeepening(uint32 depth, SearchSettings searchSettings);
 
+    void InsertKillerMove(const Move& move);
+
     TranspositionTable m_mainSearchTransTable;
     TranspositionTable m_qSearchTransTable;
     Board*  m_pBoard;
@@ -130,6 +135,7 @@ private:
         uint64  extendedFutilityCutoffs;
         uint64  multiCutCutoffs;
         uint64  lateMoveReductions;
+        uint64  nullWindowReSearches;
     } m_searchValues;
 
     bool IsMoveGoodForQsearch(const Move& move, bool inCheck);
