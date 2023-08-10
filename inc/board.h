@@ -237,6 +237,7 @@ public:
     // Assumes the checkmask has been set already.
     bool InCheck() { return m_boardState.numPiecesChecking != 0; }
 
+    template<bool isWhite>
     bool IsMoveLegal(const Move& move);
 
     uint64 GetZobKey() { return m_boardState.zobristKey; }
@@ -290,8 +291,8 @@ private:
     inline  bool IsBlackKnight(uint64 piece) { return (piece & BKnight()) != 0; }
     inline  bool IsBlackPawn(uint64 piece)   { return (piece & BPawn())   != 0; }
 
-    inline  bool IsBlack(uint64 piece) { return (m_boardState.blackPieces & piece) != 0; }
-    inline  bool IsWhite(uint64 piece) { return (m_boardState.whitePieces & piece) != 0; }
+    inline  bool IsBlack(uint64 piece) { return (m_boardState.blackPieces & piece) != 0ull; }
+    inline  bool IsWhite(uint64 piece) { return (m_boardState.whitePieces & piece) != 0ull; }
 
     // templated for isWhite, you should know if the piece you're looking for is black or white...
     template<bool isWhite> Piece GetPieceFromPos(uint64 pos);

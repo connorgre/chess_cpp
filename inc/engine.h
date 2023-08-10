@@ -47,6 +47,9 @@ struct SearchSettings
 
     bool   expectedCutNode;         //> If we expect a beta cutoff (ie should we do multi-cut)
 
+    bool   useKillerMoves;          //> Keep track of non captures that cause beta cutoff on same
+                                    //  ply
+
     bool   nullWindowSearch;        //> Search with an alpha beta window of 1, research if we get a
                                     //  cutoff
 
@@ -116,7 +119,7 @@ private:
     template<bool isWhite>
     Move IterativeDeepening(uint32 depth, SearchSettings searchSettings);
 
-    void InsertKillerMove(const Move& move);
+    void InsertKillerMove(const Move& move, uint32 ply);
 
     TranspositionTable m_mainSearchTransTable;
     TranspositionTable m_qSearchTransTable;
@@ -136,14 +139,18 @@ private:
         uint64  multiCutCutoffs;
         uint64  lateMoveReductions;
         uint64  nullWindowReSearches;
+        uint64  numKillerMoves;
     } m_searchValues;
 
     bool IsMoveGoodForQsearch(const Move& move, bool inCheck);
 
     std::string ConvertScoreToStr(int32 score);
+
+    template<bool isWhite>
+    Move GetNextMove(Move** ppMoveList, GetNextMoveData* pData);
+
 };
 
 void SortMoves(Move* pMoveList);
 int32 ScoreMoveMVVLVA(const Move& move);
-Move GetNextMove(Move** ppMoveList, GetNextMoveData* pData);
 GetNextMoveData InitGetNextMoveData();

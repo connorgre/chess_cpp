@@ -159,23 +159,33 @@ template void Board::GenerateCheckAndPinMask<false>();
 
 // Checks if we can generate this move right now.  Doesn't necessarily verify the legality of a
 // king move.  I plan on adding that... Maybe an IsKingMoveLegal ? 
+template<bool isWhite>
 bool Board::IsMoveLegal(const Move& move)
 {
     bool isLegal = true;
     if (IsWhite(move.fromPiece))
     {
         GenerateCheckAndPinMask<true>();
+        if (isWhite == false)
+        {
+            isLegal = false;
+        }
     }
     else
     {
         GenerateCheckAndPinMask<false>();
+        if (isWhite == true)
+        {
+            isLegal = false;
+        }
     }
+
     // Are the pieces in the right spot
-    if ((m_pieces[move.fromPiece] & move.fromPos) == 0)
+    if ((m_pieces[move.fromPiece] & move.fromPos) == 0ull)
     {
         isLegal = false;
     }
-    if (((m_pieces[move.toPiece] & move.toPos) == 0) && (move.toPiece != Piece::NoPiece))
+    if (((m_pieces[move.toPiece] & move.toPos) == 0ull) && (move.toPiece != Piece::NoPiece))
     {
         isLegal = false;
     }
@@ -188,6 +198,12 @@ bool Board::IsMoveLegal(const Move& move)
 
     // If it's a castle then check that too
     if (((move.flags & MoveFlags::CastleFlags) != 0) && ((move.flags & m_boardState.castleMask) == 0))
+    {
+        isLegal = false;
+    }
+
+    // If we are in double check, only the king can be moved.
+    if ((m_boardState.numPiecesChecking > 1) && ((GetKing<isWhite>() & move.fromPos) == 0ull))
     {
         isLegal = false;
     }
@@ -250,6 +266,9 @@ bool Board::IsMoveLegal(const Move& move)
     return isLegal;
 }
 
+template bool Board::IsMoveLegal<true>(const Move& move);
+template bool Board::IsMoveLegal<false>(const Move& move);
+
 // Generates all legal moves.  I should probably relax king 'seenSquares' rules, and only check
 // those on the first king move.  This should avoid the most expensive part of the check.
 template<bool isWhite, bool onlyCaptures>
@@ -303,7 +322,6 @@ void Board::GenerateLegalMoves(Move** ppMoveList, uint32* pNumMoves)
 
     ppMoveList[MoveTypes::Best][0].fromPiece             = Piece::EndOfMoveList;
     ppMoveList[MoveTypes::Attack][numCaptures].fromPiece = Piece::EndOfMoveList;
-    ppMoveList[MoveTypes::Killer][0].fromPiece           = Piece::EndOfMoveList;
     ppMoveList[MoveTypes::Normal][numNormal].fromPiece   = Piece::EndOfMoveList;
 
     if (pNumMoves != nullptr)
