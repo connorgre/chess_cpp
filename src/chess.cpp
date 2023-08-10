@@ -486,6 +486,18 @@ Result ChessGame::ParseResetCommand(
             char fenStr[] = "r4rk1/p4ppp/Bppp2n1/7q/4bP2/6P1/PPPQ3P/R1B2RK1 w -";
             memcpy(pInputCommand->reset.fenStr, fenStr, sizeof(fenStr));
         }
+        else if (wordVec[1] == "3")
+        {
+            // stockfish says +1.7 e8c8
+            char fenStr[] = "1kq1Q3/pp5p/6p1/1Np2p2/8/P2P2b1/1PPB1nK1/8 w - - 1 26";
+            memcpy(pInputCommand->reset.fenStr, fenStr, sizeof(fenStr));
+        }
+        else if (wordVec[1] == "4")
+        {
+            // stockfish says +.4 g5f3
+            char fenStr[] = "b3nrk1/8/5q1p/2p1N1N1/p1P1P3/P2PQ2P/2P2PP1/7K w - - 1 26";
+            memcpy(pInputCommand->reset.fenStr, fenStr, sizeof(fenStr));
+        }
         else if ((wordVec[1] == "tt") || (wordVec[1] == "transtable"))
         {
             pInputCommand->reset.isTTReset = true;

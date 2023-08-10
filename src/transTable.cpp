@@ -32,6 +32,7 @@ void TranspositionTable::Destroy()
     m_pTable = nullptr;
 }
 
+// Makes the engine ~10% faster
 void TranspositionTable::PrefetchEntry(uint64 zobKey)
 {
     uint32 entryIdx = HashZobKey(zobKey);

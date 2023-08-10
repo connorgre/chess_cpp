@@ -44,6 +44,9 @@ struct GetNextMoveData
 struct SearchSettings
 {
     bool   onPv;                    //> Principle Variation doesn't have any pruning
+
+    bool   expectedCutNode;
+
     bool   nullMovePrune;           //> Prune moves where the other team can't improve their score
                                     //  with a free move on a reduced depth search
     uint32 nullMoveDepth;           //> Depth reduction for null moves
@@ -64,6 +67,13 @@ struct SearchSettings
     uint32 multiCutMoves;           //  the number of beta cutoffs >= multiCutThreshold, then
     uint32 multiCutThreshold;       //  return beta
     uint32 mulitCutDepth;
+
+    bool   lateMoveReduction;       //> If none of the first numLateMovesSub beat alpha, then
+    uint32 numLateMovesSub;         //  subtract lateMoveSub from depth.  If none of the first
+    uint32 numLateMovesDiv;         //  numLateMovesDiv beat alpha, then divide depth by
+    uint32 lateMoveSub;             //  lateMoveDiv
+    uint32 lateMoveDiv;
+
 
 
 };
@@ -119,7 +129,7 @@ private:
         uint64  futilityCutoffs;
         uint64  extendedFutilityCutoffs;
         uint64  multiCutCutoffs;
-        uint64  lateMoveCutoffs;
+        uint64  lateMoveReductions;
     } m_searchValues;
 
     bool IsMoveGoodForQsearch(const Move& move, bool inCheck);

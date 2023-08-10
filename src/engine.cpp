@@ -86,6 +86,12 @@ void ChessEngine::SetupInitialSearchSettings(SearchSettings* pSettings)
     pSettings->multiCutMoves          = 6;
     pSettings->multiCutThreshold      = 3;
     pSettings->mulitCutDepth          = 3;
+
+    pSettings->lateMoveReduction      = true;
+    pSettings->numLateMovesSub        = 3;
+    pSettings->numLateMovesDiv        = 7;
+    pSettings->lateMoveSub            = 1;
+    pSettings->lateMoveDiv            = 3;
 }
 
 void ChessEngine::DoEngine(uint32 depth, bool isWhite, bool doMove)
@@ -146,6 +152,7 @@ void ChessEngine::DoEngine(uint32 depth, bool isWhite, bool doMove)
     std::cout << "Futility Prunes      : " << m_searchValues.futilityCutoffs << std::endl;
     std::cout << "Extended Fut. Prunes : " << m_searchValues.extendedFutilityCutoffs << std::endl;
     std::cout << "MultiCut Prunes      : " << m_searchValues.multiCutCutoffs << std::endl;
+    std::cout << "Late Move Reductions : " << m_searchValues.lateMoveReductions << std::endl;
 }
 
 void ChessEngine::DoPerft(uint32 depth, bool isWhite, bool expanded)
@@ -336,8 +343,15 @@ int32 ChessEngine::Negmax(
     }
     m_searchValues.normalSearched++;
 
-    // Prefetch the TT before generating the check and pin masks
+    // Prefetch the TT before generating the check and pin masks.  Prefetching the TT data make
+    // the engine ~10% faster.
     m_mainSearchTransTable.PrefetchEntry(m_pBoard->GetZobKey());
+
+    settings.expectedCutNode = !settings.expectedCutNode;
+    if (settings.onPv)
+    {
+        settings.expectedCutNode = false;
+    }
 
     // This will allow us to know if we are in check ahead of time
     m_pBoard->GenerateCheckAndPinMask<isWhite>();
@@ -440,10 +454,11 @@ int32 ChessEngine::Negmax(
         ppMoveList[MoveTypes::Best][0] = ttMove;
     }
 
-    const bool canDoMultiCut = (settings.onPv == false) &&
-                               (settings.multiCutPrune == true) &&
-                               (inCheck == false)                     &&
-                               (depth > settings.mulitCutDepth + 1);
+    const bool canDoMultiCut = (settings.onPv == false)             &&
+                               (settings.multiCutPrune == true)     &&
+                               (inCheck == false)                   &&
+                               (depth > settings.mulitCutDepth + 1) &&
+                               (settings.expectedCutNode == true);
     if (canDoMultiCut)
     {
         uint32 numBetaCutoffs  = 0;
@@ -487,11 +502,47 @@ int32 ChessEngine::Negmax(
     nextMoveData.moveType = MoveTypes::Best;
     Move      curMove  = GetNextMove(ppMoveList, &nextMoveData);
 
+    const bool canDoLateMoveReduction = (settings.onPv == false) &&
+                                        (settings.lateMoveReduction == true);
+
+    uint32 numMoves = 0;
+    int32 searchDepth = depth - 1;
     while (curMove.fromPiece != Piece::EndOfMoveList)
     {
+        numMoves++;
+        if (canDoLateMoveReduction)
+        {
+            // If we haven't beaten alpha and are on the late moves.
+            if (ttScoreType != TTScoreType::Exact)
+            {
+                if (numMoves > settings.numLateMovesDiv)
+                {
+                    searchDepth = depth / settings.lateMoveDiv;
+                    m_searchValues.lateMoveReductions++;
+                }
+                else if (numMoves > settings.numLateMovesSub)
+                {
+                    searchDepth = depth - settings.lateMoveSub;
+                    m_searchValues.lateMoveReductions++;
+                }
+                else
+                {
+                    searchDepth = depth - 1;
+                }
+                if ((searchDepth <= 0) && (depth != 1))
+                {
+                    searchDepth = 1;
+                }
+            }
+            else
+            {
+                searchDepth = depth - 1;
+            }
+        }
+
         m_pBoard->MakeMove<isWhite>(curMove);
 
-        int32 moveScore = Negmax<!isWhite, false>(depth - 1, 
+        int32 moveScore = Negmax<!isWhite, false>(searchDepth, 
                                                   ply + 1,
                                                   nullptr,
                                                   beta * -1,
