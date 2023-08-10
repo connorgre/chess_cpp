@@ -121,8 +121,8 @@ private:
 
     void InsertKillerMove(const Move& move, uint32 ply);
 
-    TranspositionTable<1> m_mainSearchTransTable;
-    TranspositionTable<1> m_qSearchTransTable;
+    TranspositionTable m_mainSearchTransTable;
+    TranspositionTable m_qSearchTransTable;
     Board*  m_pBoard;
     Move*** m_pppMoveLists;
 
