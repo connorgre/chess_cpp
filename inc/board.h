@@ -27,11 +27,11 @@ enum Piece : uint32
 enum PieceScores : int32
 {
     KingScore   = 0x0FFF,
-    QueenScore  = 90,
-    RookScore   = 50,
-    BishopScore = 32,
-    KnightScore = 30,
-    PawnScore   = 10,
+    QueenScore  = 900,
+    RookScore   = 500,
+    BishopScore = 320,
+    KnightScore = 300,
+    PawnScore   = 100,
 
 };
 
@@ -171,6 +171,8 @@ struct BoardInfo
     bool illegalKingMovesValid;
 
     int32 pieceValueScore;
+
+    uint64 lastPosCaptured;
 };
 
 class Board
@@ -262,7 +264,9 @@ public:
     uint64 GetZobKey() { return m_boardState.zobristKey; }
 
     void InvalidateCheckPinAndIllegalMoves() { m_boardState.illegalKingMovesValid = false;
-                                               m_boardState.checkAndPinMasksValid = false;};
+                                               m_boardState.checkAndPinMasksValid = false;}
+
+    uint64 GetLastPosCaptured() { return m_boardState.lastPosCaptured; }
 private:
 
     void ResetPieceScore();

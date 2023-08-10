@@ -26,8 +26,8 @@ constexpr int32 InitialBeta       =  0x7FFF;
 constexpr int32 InvalidScore           = -0x5FFF;
 constexpr int32 TTScoreNotFound        = -0x5FF0;
 
-constexpr uint32 MainTransTableSize    = 15485867;  // large-ish prime
-constexpr uint32 QSearchTransTableSize = 999983; // 999983;
+constexpr uint32 MainTransTableSize    = 8000009; //15485867;  // large-ish prime
+constexpr uint32 QSearchTransTableSize =  999983; // 999983;
 
 constexpr int32 CastleScore = -10;
 
@@ -80,7 +80,7 @@ struct SearchSettings
     uint32 lateMoveSub;             //  lateMoveDiv
     uint32 lateMoveDiv;
 
-
+    bool   searchReCaptureFirst;    //> Always put re-captures as the best move
 
 };
 
@@ -109,7 +109,7 @@ public:
     int32 Negmax(uint32 depth, uint32 ply, Move* bestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
 
     template<bool isWhite>
-    int32 QuiscenceSearch(uint32 ply, int32 alpha, int32 beta);
+    int32 QuiscenceSearch(uint32 ply, int32 alpha, int32 beta, SearchSettings settings);
 
     void SetupInitialSearchSettings(SearchSettings *pSearchSettings);
 
@@ -121,8 +121,8 @@ private:
 
     void InsertKillerMove(const Move& move, uint32 ply);
 
-    TranspositionTable m_mainSearchTransTable;
-    TranspositionTable m_qSearchTransTable;
+    TranspositionTable<1> m_mainSearchTransTable;
+    TranspositionTable<1> m_qSearchTransTable;
     Board*  m_pBoard;
     Move*** m_pppMoveLists;
 
@@ -147,10 +147,11 @@ private:
     std::string ConvertScoreToStr(int32 score);
 
     template<bool isWhite>
-    Move GetNextMove(Move** ppMoveList, GetNextMoveData* pData);
+    Move GetNextMove(Move** ppMoveList, GetNextMoveData* pData, const SearchSettings& settings);
 
+    void SortMoves(Move* pMoveList, const SearchSettings& settings);
 };
 
-void SortMoves(Move* pMoveList);
+
 int32 ScoreMoveMVVLVA(const Move& move);
 GetNextMoveData InitGetNextMoveData();

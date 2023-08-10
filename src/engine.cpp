@@ -71,6 +71,7 @@ void ChessEngine::SetupInitialSearchSettings(SearchSettings* pSettings)
     pSettings->onPv                   = true;
     pSettings->nullWindowSearch       = true;
     pSettings->useKillerMoves         = true;
+    pSettings->searchReCaptureFirst   = true;
 
     pSettings->nullMovePrune          = true;
     pSettings->nullMoveDepth          = 4;
@@ -89,7 +90,7 @@ void ChessEngine::SetupInitialSearchSettings(SearchSettings* pSettings)
     pSettings->multiCutThreshold      = 3;
     pSettings->mulitCutDepth          = 3;
 
-    pSettings->lateMoveReduction      = true;
+    pSettings->lateMoveReduction      = false;
     pSettings->numLateMovesSub        = 3;
     pSettings->numLateMovesDiv        = 6;
     pSettings->lateMoveSub            = 1;
@@ -221,7 +222,8 @@ uint32 ChessEngine::Perft(uint32 depth, uint32 ply)
 
 
     GetNextMoveData nextMoveData = InitGetNextMoveData();
-    Move            curMove      = GetNextMove<isWhite>(ppMoveList, &nextMoveData);
+    const SearchSettings settings = {};
+    Move            curMove      = GetNextMove<isWhite>(ppMoveList, &nextMoveData, settings);
 
     BoardInfo prevBoardData = {};
     uint64 prevBoardPieces[static_cast<uint32>(Piece::PieceCount)];
@@ -234,7 +236,7 @@ uint32 ChessEngine::Perft(uint32 depth, uint32 ply)
         Perft<!isWhite>(depth-1, ply+1);
         m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
 
-        curMove = GetNextMove<isWhite>(ppMoveList, &nextMoveData);
+        curMove = GetNextMove<isWhite>(ppMoveList, &nextMoveData, settings);
     }
 
     return 0;
@@ -256,7 +258,8 @@ void ChessEngine::PerftExpanded(uint32 depth)
     std::string prevMoveStr = "00";
 
     GetNextMoveData nextMoveData = InitGetNextMoveData();
-    Move            curMove      = GetNextMove<isWhite>(ppMoveList, &nextMoveData);
+    const SearchSettings settings = {};
+    Move            curMove      = GetNextMove<isWhite>(ppMoveList, &nextMoveData, settings);
 
     while (curMove.fromPiece != Piece::EndOfMoveList)
     {
@@ -282,7 +285,7 @@ void ChessEngine::PerftExpanded(uint32 depth)
         std::cout << moveStr << ": " << m_searchValues.positionsSearched - prevNumMoves << std::endl;
         prevNumMoves = m_searchValues.positionsSearched;
 
-        curMove = GetNextMove<isWhite>(ppMoveList, &nextMoveData);
+        curMove = GetNextMove<isWhite>(ppMoveList, &nextMoveData, settings);
     }
 }
 
@@ -318,7 +321,10 @@ Move ChessEngine::IterativeDeepening(uint32 depth, SearchSettings settings)
 
         if ((settings.aspirationWindow) && ((score <= alpha) || (score >= beta)))
         {
-            std::cout << "did full window search" << std::endl;
+            if (depth - 4 <= searchDepth)
+            {
+                std::cout << "Research with full window: " << searchDepth << std::endl;
+            }
             score = Negmax<isWhite, true>(searchDepth, 0, &bestMove, InitialAlpha, InitialBeta, settings);
         }
     }
@@ -343,7 +349,7 @@ int32 ChessEngine::Negmax(
 
     if ((depth <= 0) || (ply == MaxEngineDepth))
     {
-        int32 score = QuiscenceSearch<isWhite>(ply, alpha, beta);
+        int32 score = QuiscenceSearch<isWhite>(ply, alpha, beta, settings);
         return score;
     }
     m_searchValues.normalSearched++;
@@ -393,7 +399,7 @@ int32 ChessEngine::Negmax(
         int32 futilityScore = m_pBoard->ScoreBoard<isWhite>();
         if (futilityScore < alpha - settings.futilityCutoff)
         {
-            int32 futilityScore = QuiscenceSearch<isWhite>(ply, alpha, beta);
+            int32 futilityScore = QuiscenceSearch<isWhite>(ply, alpha, beta, settings);
             m_searchValues.futilityCutoffs++;
             return futilityScore;
         }
@@ -408,7 +414,7 @@ int32 ChessEngine::Negmax(
         int32 futilityScore = m_pBoard->ScoreBoard<isWhite>();
         if (futilityScore < alpha - settings.extendedFutilityCutoff)
         {
-            int32 futilityScore = QuiscenceSearch<isWhite>(ply, alpha, beta);
+            int32 futilityScore = QuiscenceSearch<isWhite>(ply, alpha, beta, settings);
             m_searchValues.extendedFutilityCutoffs++;
             return futilityScore;
         }
@@ -471,7 +477,7 @@ int32 ChessEngine::Negmax(
         settings.multiCutPrune = false;
         uint32 numMovesDone    = 0;
 
-        Move curMove           = GetNextMove<isWhite>(ppMoveList, &nextMoveData);
+        Move curMove           = GetNextMove<isWhite>(ppMoveList, &nextMoveData, settings);
 
         while((curMove.fromPiece != Piece::EndOfMoveList) && (numMovesDone < settings.multiCutMoves))
         {
@@ -496,7 +502,7 @@ int32 ChessEngine::Negmax(
                     return beta;
                 }
             }
-            curMove = GetNextMove<isWhite>(ppMoveList, &nextMoveData);
+            curMove = GetNextMove<isWhite>(ppMoveList, &nextMoveData, settings);
         }
         settings.multiCutPrune = true;
     }
@@ -506,7 +512,7 @@ int32 ChessEngine::Negmax(
 
     nextMoveData.moveIdx = 0;
     nextMoveData.moveType = MoveTypes::Best;
-    Move      curMove  = GetNextMove<isWhite>(ppMoveList, &nextMoveData);
+    Move      curMove  = GetNextMove<isWhite>(ppMoveList, &nextMoveData, settings);
 
     const bool canDoLateMoveReduction = (settings.onPv == false) &&
                                         (settings.lateMoveReduction == true);
@@ -614,7 +620,7 @@ int32 ChessEngine::Negmax(
             searchBeta = alpha + 1;
         }
 
-        curMove = GetNextMove<isWhite>(ppMoveList, &nextMoveData);
+        curMove = GetNextMove<isWhite>(ppMoveList, &nextMoveData, settings);
     }
 
     if constexpr (onPlyZero)
@@ -633,7 +639,7 @@ template int32 ChessEngine::Negmax<false, true> (uint32 depth, uint32 ply, Move*
 template int32 ChessEngine::Negmax<false, false>(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
 
 template<bool isWhite>
-int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
+int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta, SearchSettings settings)
 {
     m_pBoard->InvalidateCheckPinAndIllegalMoves();
     m_searchValues.positionsSearched++;
@@ -699,7 +705,7 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
 
     bool didMove = false;
     GetNextMoveData nextMoveData = InitGetNextMoveData();
-    Move            curMove      = GetNextMove<isWhite>(ppMoveList, &nextMoveData);
+    Move            curMove      = GetNextMove<isWhite>(ppMoveList, &nextMoveData, settings);
     while (curMove.fromPiece != Piece::EndOfMoveList)
     {
         // Once we're just capturing pawns, break out.
@@ -709,7 +715,7 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
         }
         m_pBoard->MakeMove<isWhite>(curMove);
         didMove = true;
-        int32 moveScore = QuiscenceSearch<!isWhite>(ply + 1, beta * -1, alpha * -1);
+        int32 moveScore = QuiscenceSearch<!isWhite>(ply + 1, beta * -1, alpha * -1, settings);
         // Flip the sign since this is negmax
         moveScore *= -1;
 
@@ -730,7 +736,7 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta)
             ttScoreType = TTScoreType::UpperBound;
             break;
         }
-        curMove = GetNextMove<isWhite>(ppMoveList, &nextMoveData);
+        curMove = GetNextMove<isWhite>(ppMoveList, &nextMoveData, settings);
     }
 
     if (didMove)
@@ -785,9 +791,10 @@ void SwapMoves(Move* pMoveList, int32 idx1, int32 idx2)
 }
 
 // Sort them using a simple in place insertion sort.
-void SortMoves(Move* pMoveList)
+void ChessEngine::SortMoves(Move* pMoveList, const SearchSettings& settings)
 {
     uint32 i = 0;
+    // First, see if we can capture the piece on the last square that was moved to
     while (pMoveList[i].fromPiece != Piece::EndOfMoveList)
     {
         uint32 minIdx = i;
@@ -797,6 +804,17 @@ void SortMoves(Move* pMoveList)
             if (pMoveList[j].score < pMoveList[minIdx].score)
             {
                 minIdx = j;
+            }
+
+            // If we are capturing the piece on the square the enemy most recently moved to, then
+            // immediately mark it as the best attack
+            if (settings.searchReCaptureFirst)
+            {
+                if (pMoveList[j].toPos == m_pBoard->GetLastPosCaptured())
+                {
+                    minIdx = j;
+                    break;
+                }
             }
             j++;
         }
@@ -836,7 +854,7 @@ void ChessEngine::InsertKillerMove(const Move& move, uint32 ply)
 // Gets the next move.  Should initialize pMoveIdx and pMoveType to 0 and Best outside this function.
 // This will sort the moves as needed.
 template<bool isWhite>
-Move ChessEngine::GetNextMove(Move** ppMoveList, GetNextMoveData* pData)
+Move ChessEngine::GetNextMove(Move** ppMoveList, GetNextMoveData* pData, const SearchSettings& settings)
 {
     Move curMove = ppMoveList[pData->moveType][pData->moveIdx];
 
@@ -849,7 +867,7 @@ Move ChessEngine::GetNextMove(Move** ppMoveList, GetNextMoveData* pData)
                 // Sort Attacking moves as needed
                 if (pData->sortedAttacks == false)
                 {
-                    SortMoves(&(ppMoveList[MoveTypes::Attack][0]));
+                    SortMoves(&(ppMoveList[MoveTypes::Attack][0]), settings);
                 }
                 pData->moveType = MoveTypes::Attack;
                 break;
@@ -883,7 +901,7 @@ Move ChessEngine::GetNextMove(Move** ppMoveList, GetNextMoveData* pData)
         bool isLegal = m_pBoard->IsMoveLegal<isWhite>(curMove);
         if (isLegal == false)
         {
-            curMove = GetNextMove<isWhite>(ppMoveList, pData);
+            curMove = GetNextMove<isWhite>(ppMoveList, pData, settings);
         }
     }
 

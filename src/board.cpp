@@ -409,6 +409,11 @@ void Board::GenerateRayTable()
 template<bool isWhite>
 void Board::MakeMove(const Move& move)
 {
+    bool isCaptureOfNonPawn = (move.toPiece != Piece::NoPiece) &&
+                              (move.toPiece != Piece::wPawn)   &&
+                              (move.toPiece != Piece::bPawn);
+    m_boardState.lastPosCaptured = (isCaptureOfNonPawn) ? move.toPos : 0ull;
+
     // Switch the team.
     m_boardState.zobristKey ^= m_ppZobristArray[0][65];
     m_boardState.isWhiteTurn = !m_boardState.isWhiteTurn;
