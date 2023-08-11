@@ -88,7 +88,7 @@ void ChessEngine::SetupInitialSearchSettings(SearchSettings* pSettings)
     pSettings->multiCutPrune          = true;
     pSettings->multiCutMoves          = 6;
     pSettings->multiCutThreshold      = 3;
-    pSettings->mulitCutDepth          = 3;
+    pSettings->multiCutDepth          = 3;
 
     pSettings->lateMoveReduction      = false;
     pSettings->numLateMovesSub        = 3;
@@ -97,28 +97,31 @@ void ChessEngine::SetupInitialSearchSettings(SearchSettings* pSettings)
     pSettings->lateMoveDiv            = 3;
 }
 
-void ChessEngine::DoEngine(uint32 depth, bool isWhite, bool doMove)
+void ChessEngine::DoEngine(EngineSettings settings)
 {
     m_searchValues = {};
 
     Move bestMove = {};
     auto startTime = std::chrono::steady_clock::now();
 
-    SearchSettings settings = {};
-    SetupInitialSearchSettings(&settings);
-
-    if (isWhite)
+    if (settings.isWhite)
     {
-        bestMove = IterativeDeepening<true>(depth, settings);
-        if (doMove)
+        bestMove = IterativeDeepening<true>(settings.depth,
+                                            settings.time,
+                                            settings.useTime,
+                                            settings.searchSettings);
+        if (settings.doMove)
         {
             m_pBoard->MakeMove<true>(bestMove);
         }
     }
     else
     {
-        bestMove = IterativeDeepening<false>(depth, settings);
-        if (doMove)
+        bestMove = IterativeDeepening<false>(settings.depth,
+                                             settings.time,
+                                             settings.useTime,
+                                             settings.searchSettings);
+        if (settings.doMove)
         {
             m_pBoard->MakeMove<false>(bestMove);
         }
@@ -127,38 +130,41 @@ void ChessEngine::DoEngine(uint32 depth, bool isWhite, bool doMove)
         bestMove.score *= -1;
     }
 
-    auto endTime = std::chrono::steady_clock::now();
-    auto totalTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
-
-    uint32 knps = 0;
-    if (totalTime.count() > 0)
+    if (settings.printStats)
     {
-        knps = m_searchValues.positionsSearched / totalTime.count();
+        auto endTime = std::chrono::steady_clock::now();
+        auto totalTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+
+        uint32 knps = 0;
+        if (totalTime.count() > 0)
+        {
+            knps = m_searchValues.positionsSearched / totalTime.count();
+        }
+
+        std::string bestMoveStr = m_pBoard->GetStringFromMove(bestMove);
+
+        std::string scoreStr = ConvertScoreToStr(bestMove.score);
+
+        std::cout << "Best Move          : " << bestMoveStr << std::endl;
+        std::cout << "Score              : " << scoreStr << std::endl;
+
+        std::cout << "Time               : " << totalTime.count() << " ms" << std::endl;
+        std::cout << "Positions searched : " << m_searchValues.positionsSearched << std::endl;
+        std::cout << "Knps               : " << knps << std::endl;
+
+        std::cout << "Normal Searched       : " << m_searchValues.normalSearched << std::endl;
+        std::cout << "Quiscence searched    : " << m_searchValues.quiscenceSearched << std::endl;
+        std::cout << "TransTable hits       : " << m_searchValues.mainTransTableHits << std::endl;
+        std::cout << "QSearch TT hits       : " << m_searchValues.qTransTableHits << std::endl;
+        std::cout << "Null Move Prunes      : " << m_searchValues.nullMoveCutoffs << std::endl;
+        std::cout << "Futility Prunes       : " << m_searchValues.futilityCutoffs << std::endl;
+        std::cout << "Extended Fut. Prunes  : " << m_searchValues.extendedFutilityCutoffs << std::endl;
+        std::cout << "MultiCut Prunes       : " << m_searchValues.multiCutCutoffs << std::endl;
+        std::cout << "Late Move Reductions  : " << m_searchValues.lateMoveReductions << std::endl;
+        std::cout << "Null Window ReSearches: " << m_searchValues.nullWindowReSearches << std::endl;
+        std::cout << "Num Killer Moves Done : " << m_searchValues.numKillerMoves << std::endl;
+        std::cout << std::flush;
     }
-
-    std::string bestMoveStr = m_pBoard->GetStringFromMove(bestMove);
-
-    std::string scoreStr = ConvertScoreToStr(bestMove.score);
-
-    std::cout << "Best Move          : " << bestMoveStr << std::endl;
-    std::cout << "Score              : " << scoreStr << std::endl;
-
-    std::cout << "Time               : " << totalTime.count() << " ms" << std::endl;
-    std::cout << "Positions searched : " << m_searchValues.positionsSearched << std::endl;
-    std::cout << "Knps               : " << knps << std::endl;
-
-    std::cout << "Normal Searched       : " << m_searchValues.normalSearched << std::endl;
-    std::cout << "Quiscence searched    : " << m_searchValues.quiscenceSearched << std::endl;
-    std::cout << "TransTable hits       : " << m_searchValues.mainTransTableHits << std::endl;
-    std::cout << "QSearch TT hits       : " << m_searchValues.qTransTableHits << std::endl;
-    std::cout << "Null Move Prunes      : " << m_searchValues.nullMoveCutoffs << std::endl;
-    std::cout << "Futility Prunes       : " << m_searchValues.futilityCutoffs << std::endl;
-    std::cout << "Extended Fut. Prunes  : " << m_searchValues.extendedFutilityCutoffs << std::endl;
-    std::cout << "MultiCut Prunes       : " << m_searchValues.multiCutCutoffs << std::endl;
-    std::cout << "Late Move Reductions  : " << m_searchValues.lateMoveReductions << std::endl;
-    std::cout << "Null Window ReSearches: " << m_searchValues.nullWindowReSearches << std::endl;
-    std::cout << "Num Killer Moves Done : " << m_searchValues.numKillerMoves << std::endl;
-    std::cout << std::flush;
 }
 
 void ChessEngine::DoPerft(uint32 depth, bool isWhite, bool expanded)
@@ -300,16 +306,21 @@ template void ChessEngine::PerftExpanded<true>(uint32 depth);
 template void ChessEngine::PerftExpanded<false>(uint32 depth);
 
 template<bool isWhite>
-Move ChessEngine::IterativeDeepening(uint32 depth, SearchSettings settings)
+Move ChessEngine::IterativeDeepening(uint32 depth, TimeType searchTime, bool useTime, SearchSettings settings)
 {
-    int32 alpha = InitialAlpha;
-    int32 beta  = InitialBeta;
+    int32 alpha    = InitialAlpha;
+    int32 beta     = InitialBeta;
     Move  bestMove = {};
+    int32 score    = 0;
 
-    uint32 initialDepth = (depth < 4) ? depth : 4;
-    int32 score = Negmax<isWhite, true>(initialDepth, 0, &bestMove, alpha, beta, settings);
+    // Assume last layer will take 30% of total time.  Should be 'good enough' for now
+    TimeType maxTime = (searchTime * 7) / 10;
 
-    for (uint32 searchDepth = initialDepth + 1; searchDepth < depth; searchDepth++)
+    auto startTime = std::chrono::steady_clock::now();
+    uint32 searchDepth = 1;
+
+    bool continueSearch = true;
+    while (continueSearch)
     {
         if (settings.aspirationWindow)
         {
@@ -321,12 +332,19 @@ Move ChessEngine::IterativeDeepening(uint32 depth, SearchSettings settings)
 
         if ((settings.aspirationWindow) && ((score <= alpha) || (score >= beta)))
         {
-            if (depth - 4 <= searchDepth)
-            {
-                std::cout << "Research with full window: " << searchDepth << std::endl;
-            }
             score = Negmax<isWhite, true>(searchDepth, 0, &bestMove, InitialAlpha, InitialBeta, settings);
         }
+
+        searchDepth++;
+        auto curTime = std::chrono::steady_clock::now();
+
+        TimeType elapsedTime = std::chrono::duration_cast<TimeType>(curTime - startTime);
+        continueSearch = ((searchDepth < depth)   && (useTime == false)) ||
+                         ((elapsedTime < maxTime) && (useTime == true));
+    }
+    if (useTime == true)
+    {
+        std::cout << "Depth: " << searchDepth - 1 << std::endl;
     }
     return bestMove;
 }
@@ -428,16 +446,22 @@ int32 ChessEngine::Negmax(
     // If we can do a NullMoveSearch
     const bool canNullPrune = (settings.nullMovePrune)             &&
                               (settings.onPv == false)             &&
-                              (depth > settings.nullMoveDepth + 1) &&
                               (inCheck == false);
 
     if (canNullPrune)
     {
         int32 nullMoveScore = 0;
         settings.nullMovePrune = false;
-        const uint32 depthReduction = settings.nullMoveDepth;
+
+        int32 nullMoveSearchDepth = static_cast<int32>(depth) - settings.nullMoveDepth;
+
+        if (nullMoveSearchDepth < 1)
+        {
+            nullMoveSearchDepth = 1;
+        }
+
         m_pBoard->MakeNullMove<isWhite>();
-        nullMoveScore = Negmax<!isWhite, false>(depth - depthReduction,
+        nullMoveScore = Negmax<!isWhite, false>(nullMoveSearchDepth,
                                                 ply + 1,
                                                 nullptr,
                                                 0 - beta,
@@ -469,7 +493,7 @@ int32 ChessEngine::Negmax(
     const bool canDoMultiCut = (settings.onPv == false)             &&
                                (settings.multiCutPrune == true)     &&
                                (inCheck == false)                   &&
-                               (depth > settings.mulitCutDepth + 1) &&
+                               (depth > settings.multiCutDepth + 1) &&
                                (settings.expectedCutNode == true);
     if (canDoMultiCut)
     {
@@ -484,7 +508,7 @@ int32 ChessEngine::Negmax(
             numMovesDone++;
             m_pBoard->MakeMove<isWhite>(curMove);
 
-            int32 multiCutMoveScore = Negmax<!isWhite, false>(depth - settings.mulitCutDepth,
+            int32 multiCutMoveScore = Negmax<!isWhite, false>(depth - settings.multiCutDepth,
                                                               ply + 1,
                                                               nullptr,
                                                               0 - beta,

@@ -53,9 +53,7 @@ struct InputCommand
 
         struct
         {
-            bool isWhite;
-            uint32 depth;
-            bool doMove;
+            EngineSettings settings;
         } engine;
 
         struct

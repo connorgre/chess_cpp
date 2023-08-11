@@ -3,6 +3,7 @@
 #include "../inc/board.h"
 #include "../inc/util.h"
 #include "../inc/transTable.h"
+#include <chrono>
 
 // Most Valuble Victim Least Valuble Attacker Array.
 // Array indexed by [attacker][attackee] (attacker is the row, attacked is the column).  A more
@@ -72,7 +73,7 @@ struct SearchSettings
     bool   multiCutPrune;           //> Do a reduced depth search on the first multiCutMoves, if
     uint32 multiCutMoves;           //  the number of beta cutoffs >= multiCutThreshold, then
     uint32 multiCutThreshold;       //  return beta
-    uint32 mulitCutDepth;
+    uint32 multiCutDepth;
 
     bool   lateMoveReduction;       //> If none of the first numLateMovesSub beat alpha, then
     uint32 numLateMovesSub;         //  subtract lateMoveSub from depth.  If none of the first
@@ -84,6 +85,18 @@ struct SearchSettings
 
 };
 
+typedef std::chrono::milliseconds TimeType;
+struct EngineSettings
+{
+    uint32         depth;
+    TimeType      time;
+    bool           useTime;
+    bool           isWhite;
+    bool           doMove;
+    bool           printStats;
+    SearchSettings searchSettings;
+};
+
 class ChessEngine
 {
 public:
@@ -93,7 +106,7 @@ public:
     void Init(Board* pBoard);
     void Destroy();
 
-    void DoEngine(uint32 depth, bool isWhite, bool doMove);
+    void DoEngine(EngineSettings settings);
 
     void DoPerft(uint32 depth, bool isWhite, bool expanded);
 
@@ -117,7 +130,7 @@ public:
 private:
     
     template<bool isWhite>
-    Move IterativeDeepening(uint32 depth, SearchSettings searchSettings);
+    Move IterativeDeepening(uint32 depth, TimeType searchTime, bool useTime, SearchSettings searchSettings);
 
     void InsertKillerMove(const Move& move, uint32 ply);
 

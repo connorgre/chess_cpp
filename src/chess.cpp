@@ -91,7 +91,7 @@ void ChessGame::Run()
                 m_engine.DoPerft(command.perft.depth, command.perft.isWhite, command.perft.expanded);
                 break;
             case (Commands::Engine):
-                m_engine.DoEngine(command.engine.depth, command.engine.isWhite, command.engine.doMove);
+                m_engine.DoEngine(command.engine.settings);
                 break;
             default:
                 CH_ASSERT(false);
@@ -411,38 +411,66 @@ Result ChessGame::ParseEngineCommand(
     InputCommand* pInputCommand)
 {
     Result result = Result::Success;
-    bool colorSpecified = false;;
-    pInputCommand->engine.isWhite = true;
-    pInputCommand->engine.depth = UINT32_MAX;
-    pInputCommand->engine.doMove = false;
+    bool colorSpecified       = false;
+    bool timeOrDepthSpecified = false;
+
+    pInputCommand->engine.settings = {};
+
+    pInputCommand->engine.settings.isWhite        = true;
+    pInputCommand->engine.settings.depth          = UINT32_MAX;
+    pInputCommand->engine.settings.doMove         = false;
+    pInputCommand->engine.settings.printStats     = true;
+    pInputCommand->engine.settings.useTime        = false;
+    m_engine.SetupInitialSearchSettings(&pInputCommand->engine.settings.searchSettings);
+
     uint32 size = wordVec.size();
 
     for (uint32 word = 1; word < size; word++)
     {
         if (IsInteger(wordVec[word]))
         {
-            pInputCommand->engine.depth = std::stoi(wordVec[word]);
+            int32 num = std::stoi(wordVec[word]);
+            pInputCommand->engine.settings.depth = num;
+            pInputCommand->engine.settings.time = TimeType(num);
+        }
+        else if (wordVec[word] == "depth")
+        {
+            timeOrDepthSpecified = true;
+            pInputCommand->engine.settings.useTime = false;
+        }
+        else if (wordVec[word] == "time")
+        {
+            timeOrDepthSpecified = true;
+            pInputCommand->engine.settings.useTime = true;
         }
         else if (wordVec[word] == "black")
         {
             colorSpecified = true;
-            pInputCommand->engine.isWhite = false;
+            pInputCommand->engine.settings.isWhite = false;
         }
         else if (wordVec[word] == "white")
         {
             colorSpecified = true;
-            pInputCommand->engine.isWhite = true;
+            pInputCommand->engine.settings.isWhite = true;
         }
         else if (wordVec[word] == "move")
         {
-            pInputCommand->engine.doMove = true;
+            pInputCommand->engine.settings.doMove = true;
         }
         else
         {
             result = Result::ErrorInvalidInput;
         }
     }
-    if (pInputCommand->engine.depth > MaxEngineDepth)
+    if (pInputCommand->engine.settings.useTime == false)
+    {
+        if (pInputCommand->engine.settings.depth > MaxEngineDepth)
+        {
+            result = Result::ErrorInvalidInput;
+        }
+    }
+
+    if (timeOrDepthSpecified == false)
     {
         result = Result::ErrorInvalidInput;
     }
