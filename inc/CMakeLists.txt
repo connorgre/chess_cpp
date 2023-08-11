@@ -6,4 +6,5 @@ target_sources(${Recipe_Name} PUBLIC
     chess.h
     engine.h
     transTable.h
+    engineSettings.h
 )

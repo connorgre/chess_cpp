@@ -1,6 +1,8 @@
 #include "../inc/engine.h"
 #include "../inc/util.h"
 #include "../inc/board.h"
+#include "../inc/engineSettings.h"
+
 #include <chrono>
 
 ChessEngine::ChessEngine()
@@ -66,51 +68,40 @@ void ChessEngine::Destroy()
     m_qSearchTransTable.Destroy();
 }
 
-void ChessEngine::SetupInitialSearchSettings(SearchSettings* pSettings)
-{
-    pSettings->onPv                   = true;
-    pSettings->nullWindowSearch       = true;
-    pSettings->useKillerMoves         = true;
-    pSettings->searchReCaptureFirst   = true;
-
-    pSettings->nullMovePrune          = true;
-    pSettings->nullMoveDepth          = 4;
-
-    pSettings->aspirationWindow       = true;
-    pSettings->aspirationWindowSize   = PieceScores::PawnScore;
-
-    pSettings->futilityPrune          = true;
-    pSettings->futilityCutoff         = PieceScores::KnightScore;
-
-    pSettings->extendedFutilityPrune  = true;
-    pSettings->extendedFutilityCutoff = PieceScores::RookScore;
-
-    pSettings->multiCutPrune          = true;
-    pSettings->multiCutMoves          = 6;
-    pSettings->multiCutThreshold      = 3;
-    pSettings->multiCutDepth          = 3;
-
-    pSettings->lateMoveReduction      = false;
-    pSettings->numLateMovesSub        = 3;
-    pSettings->numLateMovesDiv        = 6;
-    pSettings->lateMoveSub            = 1;
-    pSettings->lateMoveDiv            = 3;
-}
-
-void ChessEngine::DoEngine(EngineSettings settings)
+Move ChessEngine::DoEngine(EngineSettings settings, uint32* pMaxDepth, bool* pIsMoveLegal)
 {
     m_searchValues = {};
 
     Move bestMove = {};
     auto startTime = std::chrono::steady_clock::now();
+    bool isMoveLegal = true;
+
+    // Make a null move to trade turns to keep the board state consistent
+    if (settings.isWhite)
+    {
+        if (m_pBoard->GetBoardStateIsWhiteTurn() == false)
+        {
+            m_pBoard->MakeNullMove<false>();
+        }
+    }
+    else
+    {
+        if (m_pBoard->GetBoardStateIsWhiteTurn() == true)
+        {
+            m_pBoard->MakeNullMove<true>();
+        }
+    }
 
     if (settings.isWhite)
     {
         bestMove = IterativeDeepening<true>(settings.depth,
                                             settings.time,
                                             settings.useTime,
-                                            settings.searchSettings);
-        if (settings.doMove)
+                                            settings.searchSettings,
+                                            pMaxDepth);
+        
+        isMoveLegal = m_pBoard->IsMoveLegal<true, true>(bestMove);
+        if (settings.doMove && isMoveLegal)
         {
             m_pBoard->MakeMove<true>(bestMove);
         }
@@ -120,14 +111,22 @@ void ChessEngine::DoEngine(EngineSettings settings)
         bestMove = IterativeDeepening<false>(settings.depth,
                                              settings.time,
                                              settings.useTime,
-                                             settings.searchSettings);
-        if (settings.doMove)
+                                             settings.searchSettings,
+                                             pMaxDepth);
+
+        isMoveLegal = m_pBoard->IsMoveLegal<false, true>(bestMove);
+        if (settings.doMove && isMoveLegal)
         {
             m_pBoard->MakeMove<false>(bestMove);
         }
         // Need to invert the score since black will return the hightest value because of negmax,
         // however outside negmax, negative score is better for black.
         bestMove.score *= -1;
+    }
+
+    if (pIsMoveLegal != nullptr)
+    {
+        *pIsMoveLegal = isMoveLegal;
     }
 
     if (settings.printStats)
@@ -142,7 +141,6 @@ void ChessEngine::DoEngine(EngineSettings settings)
         }
 
         std::string bestMoveStr = m_pBoard->GetStringFromMove(bestMove);
-
         std::string scoreStr = ConvertScoreToStr(bestMove.score);
 
         std::cout << "Best Move          : " << bestMoveStr << std::endl;
@@ -165,6 +163,8 @@ void ChessEngine::DoEngine(EngineSettings settings)
         std::cout << "Num Killer Moves Done : " << m_searchValues.numKillerMoves << std::endl;
         std::cout << std::flush;
     }
+
+    return bestMove;
 }
 
 void ChessEngine::DoPerft(uint32 depth, bool isWhite, bool expanded)
@@ -306,7 +306,12 @@ template void ChessEngine::PerftExpanded<true>(uint32 depth);
 template void ChessEngine::PerftExpanded<false>(uint32 depth);
 
 template<bool isWhite>
-Move ChessEngine::IterativeDeepening(uint32 depth, TimeType searchTime, bool useTime, SearchSettings settings)
+Move ChessEngine::IterativeDeepening(
+    uint32 depth,
+    TimeType searchTime,
+    bool useTime,
+    SearchSettings settings,
+    uint32* pMaxDepth)
 {
     int32 alpha    = InitialAlpha;
     int32 beta     = InitialBeta;
@@ -342,20 +347,20 @@ Move ChessEngine::IterativeDeepening(uint32 depth, TimeType searchTime, bool use
         continueSearch = ((searchDepth < depth)   && (useTime == false)) ||
                          ((elapsedTime < maxTime) && (useTime == true));
     }
-    if (useTime == true)
+    if (pMaxDepth != nullptr)
     {
-        std::cout << "Depth: " << searchDepth - 1 << std::endl;
+        *pMaxDepth = searchDepth - 1;
     }
     return bestMove;
 }
 
 template<bool isWhite, bool onPlyZero>
 int32 ChessEngine::Negmax(
-    uint32         depth, 
-    uint32         ply, 
-    Move*          pBestMove, 
-    int32          alpha, 
-    int32          beta, 
+    int32          depth,
+    uint32         ply,
+    Move*          pBestMove,
+    int32          alpha,
+    int32          beta,
     SearchSettings settings)
 {
     m_pBoard->InvalidateCheckPinAndIllegalMoves();
@@ -365,7 +370,7 @@ int32 ChessEngine::Negmax(
         pBestMove->score = NegCheckMateScore;
     }
 
-    if ((depth <= 0) || (ply == MaxEngineDepth))
+    if ((depth <= 0) || (ply >= MaxEngineDepth))
     {
         int32 score = QuiscenceSearch<isWhite>(ply, alpha, beta, settings);
         return score;
@@ -453,7 +458,7 @@ int32 ChessEngine::Negmax(
         int32 nullMoveScore = 0;
         settings.nullMovePrune = false;
 
-        int32 nullMoveSearchDepth = static_cast<int32>(depth) - settings.nullMoveDepth;
+        int32 nullMoveSearchDepth = depth - settings.nullMoveDepth;
 
         if (nullMoveSearchDepth < 1)
         {
@@ -647,6 +652,13 @@ int32 ChessEngine::Negmax(
         curMove = GetNextMove<isWhite>(ppMoveList, &nextMoveData, settings);
     }
 
+    // stalemate
+    if ((numMoves == 0) && (inCheck == false))
+    {
+        bestMove.score = 0;
+        ttScoreType    = TTScoreType::Exact;
+    }
+
     if constexpr (onPlyZero)
     {
         *pBestMove = bestMove;
@@ -657,10 +669,10 @@ int32 ChessEngine::Negmax(
     return bestScore;
 }
 
-template int32 ChessEngine::Negmax<true, true>  (uint32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
-template int32 ChessEngine::Negmax<true, false> (uint32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
-template int32 ChessEngine::Negmax<false, true> (uint32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
-template int32 ChessEngine::Negmax<false, false>(uint32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
+template int32 ChessEngine::Negmax<true, true>  (int32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
+template int32 ChessEngine::Negmax<true, false> (int32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
+template int32 ChessEngine::Negmax<false, true> (int32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
+template int32 ChessEngine::Negmax<false, false>(int32 depth, uint32 ply, Move* pBestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
 
 template<bool isWhite>
 int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta, SearchSettings settings)
@@ -671,7 +683,7 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta, SearchSe
 
     int32 standPatScore = m_pBoard->ScoreBoard<isWhite>();
 
-    if (ply == MaxEngineDepth)
+    if (ply >= MaxEngineDepth)
     {
         return standPatScore;
     }
@@ -770,7 +782,7 @@ int32 ChessEngine::QuiscenceSearch(uint32 ply, int32 alpha, int32 beta, SearchSe
     return bestScore;
 }
 
-std::string ChessEngine::ConvertScoreToStr(int32 score)
+std::string ChessEngine::ConvertScoreToStr(int32 score, int32* pCheckMateDepth)
 {
     std::string scoreStr = "";
     // detect checkmate
@@ -779,18 +791,33 @@ std::string ChessEngine::ConvertScoreToStr(int32 score)
         int32 mateDepth = (PosCheckMateScore - (score - 1)) / 2;
         scoreStr = "White has mate in ";
         scoreStr += std::to_string(mateDepth);
+
+        if (pCheckMateDepth != nullptr)
+        {
+            *pCheckMateDepth = mateDepth;
+        }
     }
     else if (score < (NegCheckMateScore + (int32)(2 * MaxEngineDepth)))
     {
         score *= -1;
-        int32 mateDepth = (NegCheckMateScore - (score - 1)) / 2;
+        int32 mateDepth = (PosCheckMateScore - (score - 1)) / 2;
         scoreStr = "Black has mate in ";
         scoreStr += std::to_string(mateDepth);
+        if (pCheckMateDepth != nullptr)
+        {
+            *pCheckMateDepth = mateDepth;
+        }
     }
     else
     {
-        scoreStr = std::to_string(((float)score) / 10.0);
+        scoreStr = std::to_string((static_cast<float>(score) / 
+                                   static_cast<float>(PieceScores::PawnScore)));
+        if (pCheckMateDepth != nullptr)
+        {
+            *pCheckMateDepth = NotCheckMate;
+        }
     }
+
     return scoreStr;
 }
 

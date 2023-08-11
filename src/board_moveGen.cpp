@@ -159,16 +159,20 @@ template void Board::GenerateCheckAndPinMask<false>();
 
 // Checks if we can generate this move right now.  Doesn't necessarily verify the legality of a
 // king move.  I plan on adding that... Maybe an IsKingMoveLegal ? 
-template<bool isWhite>
+template<bool isWhite, bool printReason>
 bool Board::IsMoveLegal(const Move& move)
 {
     bool isLegal = true;
-    if (IsWhite(move.fromPiece))
+    if (IsWhite(move.fromPos))
     {
         GenerateCheckAndPinMask<true>();
         if (isWhite == false)
         {
             isLegal = false;
+            if constexpr (printReason)
+            {
+                std::cout << "Illegal because team is wrong" << std::endl;
+            }
         }
     }
     else
@@ -177,6 +181,10 @@ bool Board::IsMoveLegal(const Move& move)
         if (isWhite == true)
         {
             isLegal = false;
+            if constexpr (printReason)
+            {
+                std::cout << "Illegal because team is wrong" << std::endl;
+            }
         }
     }
 
@@ -184,28 +192,48 @@ bool Board::IsMoveLegal(const Move& move)
     if ((m_pieces[move.fromPiece] & move.fromPos) == 0ull)
     {
         isLegal = false;
+        if constexpr (printReason)
+        {
+            std::cout << "Illegal fromPiece is not on fromPos" << std::endl;
+        }
     }
     if (((m_pieces[move.toPiece] & move.toPos) == 0ull) && (move.toPiece != Piece::NoPiece))
     {
         isLegal = false;
+        if constexpr (printReason)
+        {
+            std::cout << "Illegal because toPiece is not on toPos" << std::endl;
+        }
     }
 
     // If it's en passant, can we do that
     if ((move.flags == MoveFlags::EnPassant) && (move.toPos != m_boardState.enPassantSquare))
     {
         isLegal = false;
+        if constexpr (printReason)
+        {
+            std::cout << "Illegal because trying to en passant a non-ep pos" << std::endl;
+        }
     }
 
     // If it's a castle then check that too
     if (((move.flags & MoveFlags::CastleFlags) != 0) && ((move.flags & m_boardState.castleMask) == 0))
     {
         isLegal = false;
+        if constexpr (printReason)
+        {
+            std::cout << "Illegal because trying to do illegal castle" << std::endl;
+        }
     }
 
     // If we are in double check, only the king can be moved.
     if ((m_boardState.numPiecesChecking > 1) && ((GetKing<isWhite>() & move.fromPos) == 0ull))
     {
         isLegal = false;
+        if constexpr (printReason)
+        {
+            std::cout << "Illegal because we're in double check and not moving the king" << std::endl;
+        }
     }
 
     if (isLegal)
@@ -254,20 +282,37 @@ bool Board::IsMoveLegal(const Move& move)
             default:
                 moves = 0ull;
                 isLegal = false;
+                if constexpr (printReason)
+                {
+                    std::cout << "Illegal because move.fromPiece isn't a valid value" << std::endl;
+                }
                 break;
         }
 
         if ((moves & move.toPos) == 0ull)
         {
-            isLegal = false;
+            // Because of the way I generate castling moves, they will not be in 'moves'.  So this move
+            // is only actually illegal if we, A: arent castling or B: are trying to do an illegal castle
+            if (((move.flags & CastleFlags)  == 0) || ((move.flags & m_boardState.legalCastles) == 0))
+            {
+                isLegal = false;
+                if constexpr (printReason)
+                {
+                    std::cout << "Illegal because the square we are trying to move to isn't legal" << std::endl;
+                    std::cout << "Generated moves: " << std::endl;
+                    PrintBoard(moves);
+                }
+            }
         }
     }
 
     return isLegal;
 }
 
-template bool Board::IsMoveLegal<true>(const Move& move);
-template bool Board::IsMoveLegal<false>(const Move& move);
+template bool Board::IsMoveLegal<true, true>(const Move& move);
+template bool Board::IsMoveLegal<false, true>(const Move& move);
+template bool Board::IsMoveLegal<true, false>(const Move& move);
+template bool Board::IsMoveLegal<false, false>(const Move& move);
 
 // Generates all legal moves.  I should probably relax king 'seenSquares' rules, and only check
 // those on the first king move.  This should avoid the most expensive part of the check.
@@ -447,14 +492,18 @@ void Board::GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
                 {
                     pNormalList[*pNumNormal].flags     = flag;
                     pNormalList[*pNumNormal].score     = CastleScore;
-                    pNormalList[*pNumNormal].fromPiece = pieceType;
+                    pNormalList[*pNumNormal].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
+                    pNormalList[*pNumNormal].toPiece   = Piece::NoPiece;
+                    pNormalList[*pNumNormal].fromPos   = (isWhite) ? WhiteKingStart : BlackKingStart;
                     *pNumNormal += 1;
 
                     if (castleFlags != 0ull)
                     {
-                        pNormalList[*pNumNormal].flags = castleFlags;
-                        pNormalList[*pNumNormal].score = CastleScore;
-                        pNormalList[*pNumNormal].fromPiece = pieceType;
+                        pNormalList[*pNumNormal].flags     = castleFlags;
+                        pNormalList[*pNumNormal].score     = CastleScore;
+                        pNormalList[*pNumNormal].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
+                        pNormalList[*pNumNormal].toPiece   = Piece::NoPiece;
+                        pNormalList[*pNumNormal].fromPos   = (isWhite) ? WhiteKingStart : BlackKingStart;
                         *pNumNormal += 1;
                     }
                 }

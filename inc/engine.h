@@ -35,6 +35,8 @@ constexpr int32 CastleScore = -10;
 constexpr uint32 NumBestMoves   = 1;
 constexpr uint32 NumKillerMoves = 2;
 
+constexpr int32 NotCheckMate = -999;
+
 struct GetNextMoveData
 {
     uint32    moveIdx;
@@ -82,14 +84,13 @@ struct SearchSettings
     uint32 lateMoveDiv;
 
     bool   searchReCaptureFirst;    //> Always put re-captures as the best move
-
 };
 
 typedef std::chrono::milliseconds TimeType;
 struct EngineSettings
 {
     uint32         depth;
-    TimeType      time;
+    TimeType       time;
     bool           useTime;
     bool           isWhite;
     bool           doMove;
@@ -106,7 +107,7 @@ public:
     void Init(Board* pBoard);
     void Destroy();
 
-    void DoEngine(EngineSettings settings);
+    Move DoEngine(EngineSettings settings, uint32* pMaxDepth = nullptr, bool* isMoveLegal = nullptr);
 
     void DoPerft(uint32 depth, bool isWhite, bool expanded);
 
@@ -119,18 +120,23 @@ public:
     void ResetPerftStats();
 
     template<bool isWhite, bool onPlyZero>
-    int32 Negmax(uint32 depth, uint32 ply, Move* bestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
+    int32 Negmax(int32 depth, uint32 ply, Move* bestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
 
     template<bool isWhite>
     int32 QuiscenceSearch(uint32 ply, int32 alpha, int32 beta, SearchSettings settings);
 
-    void SetupInitialSearchSettings(SearchSettings *pSearchSettings);
-
     void ResetTransTable() { m_mainSearchTransTable.ResetTable(); m_qSearchTransTable.ResetTable(); }
+
+    std::string ConvertScoreToStr(int32 score, int32* pCheckMateDepth = nullptr);
+
 private:
-    
     template<bool isWhite>
-    Move IterativeDeepening(uint32 depth, TimeType searchTime, bool useTime, SearchSettings searchSettings);
+    Move IterativeDeepening(
+        uint32 depth, 
+        TimeType searchTime, 
+        bool useTime, 
+        SearchSettings searchSettings, 
+        uint32* pMaxDepth = nullptr);
 
     void InsertKillerMove(const Move& move, uint32 ply);
 
@@ -156,8 +162,6 @@ private:
     } m_searchValues;
 
     bool IsMoveGoodForQsearch(const Move& move, bool inCheck);
-
-    std::string ConvertScoreToStr(int32 score);
 
     template<bool isWhite>
     Move GetNextMove(Move** ppMoveList, GetNextMoveData* pData, const SearchSettings& settings);

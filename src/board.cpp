@@ -314,8 +314,21 @@ void Board::PrintBoard(uint64 pieces)
     printBuf[idx] = '\0';
 
     std::cout << printBuf << std::endl;
+    
+    if (m_boardState.isWhiteTurn)
+    {
+        std::cout << "White to move" << std::endl;
+    }
+    else
+    {
+        std::cout << "Black to move" << std::endl;
+    }
 
     bool validBoard = VerifyBoard();
+    if (validBoard == false)
+    {
+        std::cout << "Invaild board" << std::endl;
+    }
     CH_ASSERT(validBoard);
 }
 
@@ -470,10 +483,6 @@ void Board::MakeMove(const Move& move)
     {
         CH_ASSERT(false);
     }
-#if VERIFY_BOARD
-    bool validBoard = VerifyBoard();
-    CH_ASSERT(validBoard == true);
-#endif
 }
 
 template void Board::MakeMove<true>(const Move& move);

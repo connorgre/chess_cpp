@@ -258,7 +258,7 @@ public:
     // Assumes the checkmask has been set already.
     bool InCheck() { return m_boardState.numPiecesChecking != 0; }
 
-    template<bool isWhite>
+    template<bool isWhite, bool printReason = false>
     bool IsMoveLegal(const Move& move);
 
     uint64 GetZobKey() { return m_boardState.zobristKey; }
@@ -267,6 +267,8 @@ public:
                                                m_boardState.checkAndPinMasksValid = false;}
 
     uint64 GetLastPosCaptured() { return m_boardState.lastPosCaptured; }
+
+    bool GetBoardStateIsWhiteTurn() { return m_boardState.isWhiteTurn; }
 private:
 
     void ResetPieceScore();

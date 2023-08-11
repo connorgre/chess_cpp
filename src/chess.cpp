@@ -2,6 +2,7 @@
 #include "../inc/chess.h"
 #include "../inc/bitHelper.h"
 #include "../inc/engine.h"
+#include "../inc/engineSettings.h"
 #include <sstream>
 #include <vector>
 
@@ -93,6 +94,12 @@ void ChessGame::Run()
             case (Commands::Engine):
                 m_engine.DoEngine(command.engine.settings);
                 break;
+            case (Commands::Compare):
+                DoCompareEngines(command.compare.engine1, command.compare.engine2);
+                break;
+            case (Commands::Error):
+                std::cout << "Invlaid Input" << std::endl;
+                break;
             default:
                 CH_ASSERT(false);
         }
@@ -102,6 +109,78 @@ void ChessGame::Run()
         }
         std::cout << std::flush;
     }
+}
+
+void ChessGame::DoCompareEngines(EngineSettings engine1, EngineSettings engine2)
+{
+    int32 checkMateDepth = NotCheckMate;
+
+    m_engine.ResetTransTable();
+
+    auto startTime = std::chrono::steady_clock::now();
+
+    // set a time limit enough for 25 moves per team
+    TimeType timeLimit = engine1.time * 100;
+
+    TimeType elapsedTime = TimeType(0);
+
+    bool engine1Turn = true;
+    Move curMove = {};
+
+    bool isMoveLegal = true;
+    while ((elapsedTime < timeLimit) && (isMoveLegal))
+    {
+        uint32 maxDepth = 0;
+        if (engine1Turn)
+        {
+            curMove = m_engine.DoEngine(engine1, &maxDepth, &isMoveLegal);
+        }
+        else
+        {
+            curMove = m_engine.DoEngine(engine2, &maxDepth, &isMoveLegal);
+        }
+
+        auto curTime = std::chrono::steady_clock::now();
+        elapsedTime = std::chrono::duration_cast<TimeType>(curTime - startTime);
+
+        // don't let the engines use each others TT
+        m_engine.ResetTransTable();
+
+        std::string moveStr   = m_board.GetStringFromMove(curMove);
+        std::string moveScore = m_engine.ConvertScoreToStr(curMove.score, &checkMateDepth);
+
+        if (engine1Turn)
+        {
+            std::cout << "Engine 1 -- " << moveStr << " : " << moveScore << 
+                                     " -- depth: " << maxDepth << std::endl;
+            engine1Turn = false;
+        }
+        else
+        {
+            std::cout << "Engine 2 -- " << moveStr << " : " << moveScore <<
+                                     " -- depth: " << maxDepth << std::endl;
+            engine1Turn = true;
+        }
+
+        if ((-2 <= checkMateDepth) && (checkMateDepth <= 2))
+        {
+            break;
+        }
+    }
+    if (isMoveLegal == false)
+    {
+        std::cout << "Move was illegal" << std::endl;
+
+        std::cout << "All pieces" << std::endl;
+        m_board.PrintBoard(m_board.GetAllPieces());
+
+        std::cout << "White pieces" << std::endl;
+        m_board.PrintBoard(m_board.GetWhitePieces());
+
+        std::cout << "Black pieces" << std::endl;
+        m_board.PrintBoard(m_board.GetBlackPieces());
+    }
+
 }
 
 InputCommand ChessGame::ParseInput(std::string inputStr)
@@ -168,31 +247,36 @@ InputCommand ChessGame::ParseInput(std::string inputStr)
             case (Commands::Engine):
                 result = ParseEngineCommand(inputWords, &inputCommand);
                 break;
+            case (Commands::Compare):
+                result = ParseCompareCommand(inputWords, &inputCommand);
+                break;
             default:
                 CH_ASSERT(false);
+                std::cout << "Invalid Command" << std::endl;
                 result = Result::ErrorInvalidInput;
         }
     }
 
     if (result != Result::Success)
     {
-        inputCommand.command = Commands::None;
+        inputCommand.command = Commands::Error;
     }
     return inputCommand;
 }
 
 void ChessGame::GenerateCommandMap()
 {
-    m_commandMap["move"]   = Commands::Move;
-    m_commandMap["reset"]  = Commands::Reset;
-    m_commandMap["quit"]   = Commands::Quit;
-    m_commandMap["exit"]   = Commands::Quit;
-    m_commandMap["print"]  = Commands::Print;
-    m_commandMap["none"]   = Commands::None;
-    m_commandMap["undo"]   = Commands::Undo;
-    m_commandMap["perft"]  = Commands::Perft;
-    m_commandMap["engine"] = Commands::Engine;
-    m_commandMap["search"] = Commands::Engine;
+    m_commandMap["move"]    = Commands::Move;
+    m_commandMap["reset"]   = Commands::Reset;
+    m_commandMap["quit"]    = Commands::Quit;
+    m_commandMap["exit"]    = Commands::Quit;
+    m_commandMap["print"]   = Commands::Print;
+    m_commandMap["none"]    = Commands::None;
+    m_commandMap["undo"]    = Commands::Undo;
+    m_commandMap["perft"]   = Commands::Perft;
+    m_commandMap["engine"]  = Commands::Engine;
+    m_commandMap["search"]  = Commands::Engine;
+    m_commandMap["compare"] = Commands::Compare;
 }
 
 Result ChessGame::ParseMoveCommand(
@@ -421,7 +505,7 @@ Result ChessGame::ParseEngineCommand(
     pInputCommand->engine.settings.doMove         = false;
     pInputCommand->engine.settings.printStats     = true;
     pInputCommand->engine.settings.useTime        = false;
-    m_engine.SetupInitialSearchSettings(&pInputCommand->engine.settings.searchSettings);
+    pInputCommand->engine.settings.searchSettings = GetSearchSetting(EngineFlags::Default);
 
     uint32 size = wordVec.size();
 
@@ -479,6 +563,97 @@ Result ChessGame::ParseEngineCommand(
     {
         result = Result::ErrorInvalidInput;
     }
+    return result;
+}
+
+Result ChessGame::ParseCompareCommand(
+    std::vector<std::string> wordVec,
+    InputCommand* pInputCommand)
+{
+    EngineSettings engine1 = {};
+    EngineSettings engine2 = {};
+
+    engine1.useTime    = true;
+    engine2.useTime    = true;
+    engine1.printStats = false;
+    engine2.printStats = false;
+    engine1.doMove     = true;
+    engine2.doMove     = true;
+
+    // Input format:
+    // Comapre <engine1Color> <timePerMove> <+ engineFlags1 [...]> <+ engineFlags2 [...]>
+    // so the color of the engine who goes first, then the time per move, then a '+', then all of
+    // the engine 1 flags, then a '+' then all the engine2 flags
+    Result result = Result::Success;
+    uint32 vecLen = wordVec.size();
+    uint32 curIdx = 1;
+    if (vecLen < 6)
+    {
+        return Result::Error;
+    }
+    if (wordVec[curIdx] == "white")
+    {
+        engine1.isWhite = true;
+        engine2.isWhite = false;
+    }
+    else if (wordVec[curIdx] == "black")
+    {
+        engine1.isWhite = false;
+        engine2.isWhite = true;
+    }
+    else
+    {
+        return Result::ErrorInvalidInput;
+    }
+    curIdx++;
+
+    if (IsInteger(wordVec[curIdx]))
+    {
+        int32 num = std::stoi(wordVec[curIdx]);
+        engine1.time = TimeType(num);
+        engine2.time = TimeType(num);
+        curIdx++;
+    }
+    else
+    {
+        return Result::ErrorInvalidInput;
+    }
+    if (wordVec[curIdx++] != "+")
+    {
+        return Result::ErrorInvalidInput;
+    }
+
+    uint64 engine1Flags = 0ull;
+    while (wordVec[curIdx] != "+")
+    {
+        engine1Flags |= GetFlagFromString(wordVec[curIdx]);
+        curIdx++;
+
+        if (curIdx >= vecLen)
+        {
+            return Result::ErrorInvalidInput;
+        }
+    }
+    curIdx++;
+
+    uint64 engine2Flags = 0ull;
+    while (curIdx < vecLen)
+    {
+        engine2Flags |= GetFlagFromString(wordVec[curIdx]);
+        curIdx++;
+    }
+
+    if ((engine1Flags == EngineFlags::ErrorFlag) || (engine2Flags == EngineFlags::ErrorFlag))
+    {
+        return Result::ErrorInvalidInput;
+    }
+
+    engine1.searchSettings = GetSearchSetting(static_cast<EngineFlags>(engine1Flags));
+    engine2.searchSettings = GetSearchSetting(static_cast<EngineFlags>(engine2Flags));
+
+    pInputCommand->compare.engine1 = engine1;
+    pInputCommand->compare.engine2 = engine2;
+
     return result;
 }
 

@@ -19,8 +19,10 @@ enum class Commands : uint32
     Undo,
     Perft,
     Engine,
+    Compare,
 
     NumCommands,
+    Error,
 };
 
 typedef std::map<std::string, Commands> CommandMap;
@@ -61,6 +63,12 @@ struct InputCommand
             bool isTTReset;
             char fenStr[MaxFenStrLength];
         } reset;
+
+        struct
+        {
+            EngineSettings engine1;
+            EngineSettings engine2;
+        } compare;
     };
 };
 
@@ -79,6 +87,9 @@ private:
     Result HandleInput();
     InputCommand ParseInput(std::string input);
     void GenerateCommandMap();
+
+    void DoCompareEngines(EngineSettings engine1, EngineSettings engine2);
+
     Result ParseMoveCommand(
         std::vector<std::string> commandVec,
         InputCommand* pInputCommand
@@ -100,6 +111,11 @@ private:
     );
 
     Result ParseEngineCommand(
+        std::vector<std::string> commandVec,
+        InputCommand* pInputCommand
+    );
+
+    Result ParseCompareCommand(
         std::vector<std::string> commandVec,
         InputCommand* pInputCommand
     );
