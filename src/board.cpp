@@ -240,13 +240,13 @@ void Board::PrintBoard(uint64 pieces)
         else if (IsWhiteRook(piece))   pieceBuf[file][rank] = 'R';
         else if (IsWhiteBishop(piece)) pieceBuf[file][rank] = 'B';
         else if (IsWhiteKnight(piece)) pieceBuf[file][rank] = 'N';
-        else if (IsWhitePawn(piece))   pieceBuf[file][rank] = 'W';
+        else if (IsWhitePawn(piece))   pieceBuf[file][rank] = 'A';
         else if (IsBlackKing(piece))   pieceBuf[file][rank] = 'k';
         else if (IsBlackQueen(piece))  pieceBuf[file][rank] = 'q';
         else if (IsBlackRook(piece))   pieceBuf[file][rank] = 'r';
         else if (IsBlackBishop(piece)) pieceBuf[file][rank] = 'b';
         else if (IsBlackKnight(piece)) pieceBuf[file][rank] = 'n';
-        else if (IsBlackPawn(piece))   pieceBuf[file][rank] = 'Z';
+        else if (IsBlackPawn(piece))   pieceBuf[file][rank] = 'a';
         idx++;
     }
 
@@ -1034,7 +1034,7 @@ void Board::UpdateLastIrreversableMove(const Move& move)
 template<bool isWhite>
 bool Board::IsDrawByRepetition()
 {
-    uint32 startIdx = m_boardState.lastIrreversableMoveNum;
+    int32 startIdx = m_boardState.lastIrreversableMoveNum;
 
     if (isWhite)
     {
@@ -1045,9 +1045,15 @@ bool Board::IsDrawByRepetition()
         startIdx = (startIdx & ~1) + 1;
     }
 
-    uint32 endIdx = m_boardState.currMoveNum;
+    int32 endIdx = m_boardState.currMoveNum;
 
     CH_ASSERT(startIdx <= endIdx+1);
+
+    // If it's been more than 50 moves since our last irreversable move, draw by 50 move rule
+    if (endIdx - startIdx >= 50)
+    {
+        return true;
+    }
 
     uint32 numRepeated = 0;
     for (uint32 idx = startIdx; idx < endIdx; idx += 2)
@@ -1058,7 +1064,7 @@ bool Board::IsDrawByRepetition()
         }
     }
 
-    return numRepeated >= 2;
+    return numRepeated >= 3;
 }
 
 template bool Board::IsDrawByRepetition<true>();
@@ -1240,5 +1246,42 @@ int32 Board::GetKnightBonusScores()
 
     return whiteScore - blackScore;
 }
+
+// This will give extra points for being aggressive with our king in the endgame
+int32 Board::AggressiveKingEndgameBonus()
+{
+    int32 whiteBonus = 0;
+    int32 blackBonus = 0;
+    bool isEndGame    = m_boardState.totalMaterialValue < QueenScore + KnightScore;
+    bool whiteWinning = m_boardState.pieceValueScore > 0;
+    bool blackWinning = m_boardState.pieceValueScore < 0;
+    if (isEndGame && whiteWinning)
+    {
+        int32 whiteKingFile = GetFile(GetKing<true>());
+        int32 whiteKingRank = GetRank(GetKing<true>());
+        int32 blackKingFile = GetFile(GetKing<true>());
+        int32 blackKingRank = GetRank(GetKing<true>());
+
+        int32 fileDiff = 8 - std::abs(whiteKingFile - blackKingFile);
+        int32 rankDiff = 8 - std::abs(whiteKingRank - blackKingRank);
+
+        int32 whiteBonus = AggressiveKingEndgameScore * (fileDiff + rankDiff);
+    }
+    else if (isEndGame && blackWinning)
+    {
+        int32 whiteKingFile = GetFile(GetKing<true>());
+        int32 whiteKingRank = GetRank(GetKing<true>());
+        int32 blackKingFile = GetFile(GetKing<true>());
+        int32 blackKingRank = GetRank(GetKing<true>());
+
+        int32 fileDiff = 8 - std::abs(whiteKingFile - blackKingFile);
+        int32 rankDiff = 8 - std::abs(whiteKingRank - blackKingRank);
+
+        int32 blackBonus = AggressiveKingEndgameScore * (fileDiff + rankDiff);
+    }
+
+    return whiteBonus - blackBonus;
+}
+
 template int32 Board::ScoreBoard<true>();
 template int32 Board::ScoreBoard<false>();

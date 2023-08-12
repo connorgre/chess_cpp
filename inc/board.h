@@ -49,6 +49,9 @@ enum PieceScores : int32
     ClosePawnAdvanceScore =  20,
 
     GeneralMobilityScore  =   1,            // Points for having legal moves
+
+    AggressiveKingEndgameScore = PawnScore / 4, // extra points for having our king closer to the
+                                                // enemy king if we are up in the endgame
 };
 
                                       // white scores
@@ -406,6 +409,7 @@ private:
     int32 GetPawnBonusScores();
     int32 GetRookBonusScores();
     int32 GetKnightBonusScores();
+    int32 AggressiveKingEndgameBonus();
 
     uint64 m_pieces[static_cast<uint32>(Piece::PieceCount)];
     uint64 m_pRayTable[Directions::Count][64];

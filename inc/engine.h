@@ -19,7 +19,7 @@ constexpr int32 MVVLVA_arr[6][6] = { {41, 31, 21, 12, 11, 1},   //k
                                      {45, 35, 25, 16, 15, 5},   //n
                                      {46, 36, 26, 17, 16, 6} }; //p
 
-constexpr uint32 MaxEngineDepth = 64;
+constexpr int32 MaxEngineDepth = 64;
 constexpr int32 PosCheckMateScore =  0x6FFF;
 constexpr int32 NegCheckMateScore = -0x6FFF;
 constexpr int32 InitialAlpha      = -0x7FFF;

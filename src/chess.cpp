@@ -9,8 +9,6 @@
 #include <chrono>
 
 ChessGame::ChessGame()
-:
-m_lastIrreversableMoveNum(0)
 {
 
 }
@@ -125,16 +123,11 @@ void ChessGame::DoCompareEngines(EngineSettings whiteEngine, EngineSettings blac
 
     m_engine.ResetTransTable();
 
-    m_lastIrreversableMoveNum = 0;
-    m_previousZobKeyVec.clear();
-    m_previousZobKeyVec.push_back(0);
-
     auto startTime = std::chrono::steady_clock::now();
 
     // run for 1 minute at a time
     TimeType timeLimit       = TimeType(60000);
     TimeType elapsedTime     = TimeType(0);
-    TimeType prevElapsedTime = TimeType(0);
 
     bool whitesTurn = m_board.GetBoardStateIsWhiteTurn();
     Move curMove = {};
@@ -149,10 +142,12 @@ void ChessGame::DoCompareEngines(EngineSettings whiteEngine, EngineSettings blac
            (isCheckMate == false))
     {
         uint32 maxDepth      = 0;
-        bool boardThinksDraw = false;
+        isDrawByRepetition = false;
 
         std::atomic<bool> isTimedOut;
         std::atomic<bool> moveIsDone;
+
+        auto searchStartTime = std::chrono::steady_clock::now();
 
         isTimedOut.store(false);
         moveIsDone.store(false);
@@ -164,19 +159,19 @@ void ChessGame::DoCompareEngines(EngineSettings whiteEngine, EngineSettings blac
                                     &maxDepth,
                                     &isMoveLegal,
                                     &curMove,
-                                    &boardThinksDraw,
+                                    &isDrawByRepetition,
                                     &isTimedOut,
                                     &moveIsDone]()
             {
                 if (whitesTurn)
                 {
                     curMove = m_engine.DoEngine(whiteEngine, isTimedOut, &maxDepth, &isMoveLegal);
-                    boardThinksDraw = m_board.IsDrawByRepetition<true>();
+                    isDrawByRepetition = m_board.IsDrawByRepetition<true>();
                 }
                 else
                 {
                     curMove = m_engine.DoEngine(blackEngine, isTimedOut, &maxDepth, &isMoveLegal);
-                    boardThinksDraw = m_board.IsDrawByRepetition<false>();
+                    isDrawByRepetition = m_board.IsDrawByRepetition<false>();
                 }
                 moveIsDone.store(true);
             });
@@ -199,6 +194,10 @@ void ChessGame::DoCompareEngines(EngineSettings whiteEngine, EngineSettings blac
         timeOutThread.join();
         doEngineThread.join();
 
+        auto searchEndTime = std::chrono::steady_clock::now();
+
+        TimeType searchTime = std::chrono::duration_cast<TimeType>(searchEndTime - searchStartTime);
+
         auto curTime = std::chrono::steady_clock::now();
         elapsedTime = std::chrono::duration_cast<TimeType>(curTime - startTime);
 
@@ -207,13 +206,6 @@ void ChessGame::DoCompareEngines(EngineSettings whiteEngine, EngineSettings blac
 
         std::string moveStr   = m_board.GetStringFromMove(curMove);
         std::string moveScore = m_engine.ConvertScoreToStr(curMove.score, &checkMateDepth);
-
-        isDrawByRepetition = IsDrawByRepetition(m_board.GetZobKey(), moveNum, curMove);
-
-        if (isDrawByRepetition != boardThinksDraw)
-        {
-            std::cout << "IsDrawByRepetition mismatch.  Board thinks: " << boardThinksDraw << std::endl;
-        }
 
         if (isDrawByRepetition)
         {
@@ -231,9 +223,7 @@ void ChessGame::DoCompareEngines(EngineSettings whiteEngine, EngineSettings blac
             whitesTurn = true;
         }
 
-        uint32 timeDiff = (elapsedTime - prevElapsedTime).count();
-        std::cout << moveStr << " : " << moveScore << " -- depth: " << maxDepth << " -- time: " << timeDiff << std::endl;
-        prevElapsedTime = elapsedTime;
+        std::cout << moveStr << " : " << moveScore << " -- depth: " << maxDepth << " -- time: " << searchTime.count() << std::endl;
 
         moveNum++;
         if ((-1 <= checkMateDepth) && (checkMateDepth <= 1))
@@ -254,36 +244,6 @@ void ChessGame::DoCompareEngines(EngineSettings whiteEngine, EngineSettings blac
         std::cout << "Black pieces" << std::endl;
         m_board.PrintBoard(m_board.GetBlackPieces());
     }
-}
-
-bool ChessGame::IsDrawByRepetition(uint64 zobKey, uint32 moveNum, const Move& move)
-{
-    uint32 startIdx = m_lastIrreversableMoveNum;
-
-    uint32 endIdx = moveNum;
-
-    uint32 numRepeated = 0;
-    for (uint32 idx = startIdx; idx < endIdx; idx++)
-    {
-        if (m_previousZobKeyVec[idx] == zobKey)
-        {
-            numRepeated++;
-        }
-    }
-
-    m_previousZobKeyVec.push_back(zobKey);
-    // Irreversable moves are pawn pushes, captures, and special moves (castle/promotion/ep)
-    const bool isMoveIrreversable = (move.fromPiece == Piece::wPawn) ||
-                                    (move.fromPiece == Piece::bPawn) ||
-                                    (move.toPiece != Piece::NoPiece) ||
-                                    (move.flags != 0);
-
-    if (isMoveIrreversable)
-    {
-        m_lastIrreversableMoveNum = moveNum;
-    }
-
-    return numRepeated >= 2;
 }
 
 InputCommand ChessGame::ParseInput(std::string inputStr)
@@ -611,7 +571,7 @@ Result ChessGame::ParseEngineCommand(
     pInputCommand->engine.settings.doMove         = false;
     pInputCommand->engine.settings.printStats     = true;
     pInputCommand->engine.settings.useTime        = false;
-    pInputCommand->engine.settings.searchSettings = GetSearchSetting(EngineFlags::Default);
+    pInputCommand->engine.settings.searchSettings = GetSearchSetting(EngineFlags::NoPrune);
 
     uint32 size = wordVec.size();
 

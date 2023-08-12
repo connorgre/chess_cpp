@@ -381,10 +381,19 @@ Move ChessEngine::IterativeDeepening(
         searchDepth++;
         auto curTime = std::chrono::steady_clock::now();
 
+        bool isCheckMate = (bestMove.score < NegCheckMateScore + 2*MaxEngineDepth) ||
+                           (bestMove.score > PosCheckMateScore - 2*MaxEngineDepth);
+
+        bool isStaleMate = (bestMove.score == 0)      &&
+                           (bestMove.fromPos == 0ull) &&
+                           (bestMove.toPos == 0ull);
+
         TimeType elapsedTime = std::chrono::duration_cast<TimeType>(curTime - startTime);
         continueSearch = (((searchDepth < depth)   && (useTime == false)) ||
                           ((elapsedTime < maxTime) && (useTime == true))) &&
-                         (isTimedOut.load(std::memory_order_relaxed) == false);
+                         (isTimedOut.load(std::memory_order_relaxed) == false) &&
+                         (isCheckMate == false)                                &&
+                         (isStaleMate == false);
     }
 
     if (pMaxDepth != nullptr)
@@ -525,11 +534,6 @@ int32 ChessEngine::Negmax(
 
         int32 nullMoveSearchDepth = depth - settings.nullMoveDepth;
 
-        if (nullMoveSearchDepth < 1)
-        {
-            nullMoveSearchDepth = 1;
-        }
-
         m_pBoard->MakeNullMove<isWhite>();
         nullMoveScore = Negmax<!isWhite, false>(nullMoveSearchDepth,
                                                 ply + 1,
@@ -564,13 +568,14 @@ int32 ChessEngine::Negmax(
     const bool canDoMultiCut = (settings.onPv == false)             &&
                                (settings.multiCutPrune == true)     &&
                                (inCheck == false)                   &&
-                               (depth > settings.multiCutDepth + 1) &&
                                (settings.expectedCutNode == true);
     if (canDoMultiCut)
     {
         uint32 numBetaCutoffs  = 0;
         settings.multiCutPrune = false;
         uint32 numMovesDone    = 0;
+        int32 multiCutDepth    = depth - settings.multiCutDepth;
+
 
         Move curMove           = GetNextMove<isWhite>(ppMoveList, &nextMoveData, settings);
 
@@ -578,7 +583,7 @@ int32 ChessEngine::Negmax(
         {
             numMovesDone++;
             m_pBoard->MakeMove<isWhite>(curMove);
-            int32 multiCutMoveScore = Negmax<!isWhite, false>(depth - settings.multiCutDepth,
+            int32 multiCutMoveScore = Negmax<!isWhite, false>(multiCutDepth,
                                                               ply + 1,
                                                               nullptr,
                                                               0 - beta,
@@ -639,10 +644,6 @@ int32 ChessEngine::Negmax(
                 else
                 {
                     searchDepth = depth - 1;
-                }
-                if ((searchDepth <= 0) && (depth != 1))
-                {
-                    searchDepth = 1;
                 }
             }
             else
@@ -730,6 +731,7 @@ int32 ChessEngine::Negmax(
         bestMove.toPos   = 0ull;
         bestMove.score   = 0;
         bestScore        = 0;
+        m_searchValues.drawsDetected++;
         if (0 > alpha)
         {
             ttScoreType  = TTScoreType::Exact;
@@ -812,6 +814,11 @@ int32 ChessEngine::QuiscenceSearch(
         m_pBoard->GenerateLegalMoves<isWhite, true>(ppMoveList);
     }
 
+    if (ttMoveValid && IsMoveGoodForQsearch(ttMove, inCheck))
+    {
+        ppMoveList[MoveTypes::Best][0] = ttMove;
+    }
+
     BoardInfo prevBoardData = {};
     uint64 prevBoardPieces[static_cast<uint32>(Piece::PieceCount)];
     m_pBoard->CopyBoardData(&prevBoardData);
@@ -866,6 +873,10 @@ int32 ChessEngine::QuiscenceSearch(
     if (didMove)
     {
         m_qSearchTransTable.InsertToTable(m_pBoard->GetZobKey(), 0, bestMove, ttScoreType);
+    }
+    else
+    {
+        bestScore = 0ull;
     }
     return bestScore;
 }
@@ -972,7 +983,8 @@ bool ChessEngine::IsMoveGoodForQsearch(const Move& move, bool inCheck)
     bool isCaptureOfNonPawn = (move.toPiece != Piece::NoPiece) &&
                               (move.toPiece != Piece::wPawn)   &&
                               (move.toPiece != Piece::bPawn);
-    return isCaptureOfNonPawn || inCheck;
+    bool isPromotion        = ((move.flags & MoveFlags::Promotion) != 0ull);
+    return isCaptureOfNonPawn || inCheck || isPromotion;
 }
 
 void ChessEngine::InsertKillerMove(const Move& move, uint32 ply)
