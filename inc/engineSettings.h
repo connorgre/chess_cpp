@@ -36,8 +36,8 @@ static void SetupInitialSearchSettings(SearchSettings* pSettings)
     pSettings->multiCutDepth          = 3;
 
     pSettings->lateMoveReduction      = true;
-    pSettings->numLateMovesSub        = 3;
-    pSettings->numLateMovesDiv        = 7;
+    pSettings->numLateMovesSub        = 5;
+    pSettings->numLateMovesDiv        = 10;
     pSettings->lateMoveSub            = 1;
     pSettings->lateMoveDiv            = 2;
 }
@@ -120,8 +120,6 @@ static EngineFlags GetFlagFromString(std::string flagStr)
     flagMap["strongprune"]                 = EngineFlags::StrongPrune;
     flagMap["noenhancements"]              = EngineFlags::NoEnhancements;
 
-
-
     // Check if the value exists in the map
     EngineFlags flag = EngineFlags::ErrorFlag;
 
@@ -152,8 +150,8 @@ static SearchSettings GetSearchSetting(EngineFlags flags)
 
     if (IsFlagSet(flags, WeakLateMovePrune))
     {
-        settings.numLateMovesSub = 4;
-        settings.numLateMovesDiv = 8;
+        settings.numLateMovesSub = 6;
+        settings.numLateMovesDiv = 12;
         settings.lateMoveSub     = 1;
         settings.lateMoveDiv     = 2;
     }
@@ -182,10 +180,10 @@ static SearchSettings GetSearchSetting(EngineFlags flags)
 
     if (IsFlagSet(flags, StrongLateMovePrune))
     {
-        settings.numLateMovesSub = 3;
-        settings.numLateMovesDiv = 7;
-        settings.lateMoveSub     = 2;
-        settings.lateMoveDiv     = 3;
+        settings.numLateMovesSub = 4;
+        settings.numLateMovesDiv = 8;
+        settings.lateMoveSub     = 1;
+        settings.lateMoveDiv     = 2;
     }
 
     if (IsFlagSet(flags, StrongMultiCut))

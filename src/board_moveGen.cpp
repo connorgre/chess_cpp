@@ -6,7 +6,7 @@
 // Separate function because there is quite a bit that goes into it.
 
 // rayToHit is the ray to the enemy that put us in check
-// rayToPin is the ray through our piece to a piec
+// rayToPin is the ray through our piece to a piece
 template<Directions dir, bool isWhite>
 void Board::GetCheckmaskAndPinsInDirection(uint64 pos)
 {
@@ -197,7 +197,9 @@ bool Board::IsMoveLegal(const Move& move)
             std::cout << "Illegal fromPiece is not on fromPos" << std::endl;
         }
     }
-    if (((m_pieces[move.toPiece] & move.toPos) == 0ull) && (move.toPiece != Piece::NoPiece))
+    if (((m_pieces[move.toPiece] & move.toPos) == 0ull) && 
+         (move.toPiece != Piece::NoPiece)               && 
+         (move.flags != MoveFlags::EnPassant))
     {
         isLegal = false;
         if constexpr (printReason)
@@ -289,7 +291,7 @@ bool Board::IsMoveLegal(const Move& move)
                 break;
         }
 
-        if ((moves & move.toPos) == 0ull)
+        if (((moves & move.toPos) == 0ull) && (move.flags != MoveFlags::EnPassant))
         {
             // Because of the way I generate castling moves, they will not be in 'moves'.  So this move
             // is only actually illegal if we, A: arent castling or B: are trying to do an illegal castle
@@ -439,7 +441,7 @@ void Board::GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
                     pCaptureList[*pNumCapture].fromPos = piece;
                     pCaptureList[*pNumCapture].toPos = attack;
                     pCaptureList[*pNumCapture].flags = MoveFlags::QueenPromotion;
-                    pCaptureList[*pNumCapture].score = ScoreMoveMVVLVA(pCaptureList[*pNumCapture]) - PieceScores::QueenScore;
+                    pCaptureList[*pNumCapture].score = ScoreMoveMVVLVA(pCaptureList[*pNumCapture]) + PieceScores::QueenScore;
                     *pNumCapture += 1;
 
                     pCaptureList[*pNumCapture].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
@@ -447,7 +449,7 @@ void Board::GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
                     pCaptureList[*pNumCapture].fromPos = piece;
                     pCaptureList[*pNumCapture].toPos = attack;
                     pCaptureList[*pNumCapture].flags = MoveFlags::KnightPromotion;
-                    pCaptureList[*pNumCapture].score = ScoreMoveMVVLVA(pCaptureList[*pNumCapture]) - PieceScores::KnightScore;
+                    pCaptureList[*pNumCapture].score = ScoreMoveMVVLVA(pCaptureList[*pNumCapture]) + PieceScores::KnightScore;
 
                     *pNumCapture += 1;
 
@@ -456,7 +458,7 @@ void Board::GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
                     pCaptureList[*pNumCapture].fromPos = piece;
                     pCaptureList[*pNumCapture].toPos = attack;
                     pCaptureList[*pNumCapture].flags = MoveFlags::RookPromotion;
-                    pCaptureList[*pNumCapture].score = ScoreMoveMVVLVA(pCaptureList[*pNumCapture]) - PieceScores::RookScore;
+                    pCaptureList[*pNumCapture].score = ScoreMoveMVVLVA(pCaptureList[*pNumCapture]) + PieceScores::RookScore;
 
                     *pNumCapture += 1;
 
@@ -471,7 +473,7 @@ void Board::GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
             pCaptureList[*pNumCapture].fromPos   = piece;
             pCaptureList[*pNumCapture].toPos     = attack;
             pCaptureList[*pNumCapture].flags     = flags;
-            pCaptureList[*pNumCapture].score     = ScoreMoveMVVLVA(pCaptureList[*pNumCapture]) - extraScore;
+            pCaptureList[*pNumCapture].score     = ScoreMoveMVVLVA(pCaptureList[*pNumCapture]) + extraScore;
 
             *pNumCapture += 1;
         }
@@ -494,6 +496,7 @@ void Board::GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
                     pNormalList[*pNumNormal].score     = CastleScore;
                     pNormalList[*pNumNormal].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
                     pNormalList[*pNumNormal].toPiece   = Piece::NoPiece;
+                    pNormalList[*pNumNormal].toPos     = 0ull;
                     pNormalList[*pNumNormal].fromPos   = (isWhite) ? WhiteKingStart : BlackKingStart;
                     *pNumNormal += 1;
 
@@ -503,6 +506,7 @@ void Board::GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
                         pNormalList[*pNumNormal].score     = CastleScore;
                         pNormalList[*pNumNormal].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
                         pNormalList[*pNumNormal].toPiece   = Piece::NoPiece;
+                        pNormalList[*pNumNormal].toPos     = 0ull;
                         pNormalList[*pNumNormal].fromPos   = (isWhite) ? WhiteKingStart : BlackKingStart;
                         *pNumNormal += 1;
                     }
@@ -526,32 +530,32 @@ void Board::GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
                     if (isPromotion)
                     {
                         pNormalList[*pNumNormal].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
-                        pNormalList[*pNumNormal].toPiece = Piece::NoPiece;
-                        pNormalList[*pNumNormal].fromPos = piece;
-                        pNormalList[*pNumNormal].toPos = move;
-                        pNormalList[*pNumNormal].flags = MoveFlags::QueenPromotion;
-                        pNormalList[*pNumNormal].score = -1 * PieceScores::QueenScore;
+                        pNormalList[*pNumNormal].toPiece   = Piece::NoPiece;
+                        pNormalList[*pNumNormal].fromPos   = piece;
+                        pNormalList[*pNumNormal].toPos     = move;
+                        pNormalList[*pNumNormal].flags     = MoveFlags::QueenPromotion;
+                        pNormalList[*pNumNormal].score     = PieceScores::QueenScore;
                         *pNumNormal += 1;
 
                         pNormalList[*pNumNormal].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
-                        pNormalList[*pNumNormal].toPiece = Piece::NoPiece;
-                        pNormalList[*pNumNormal].fromPos = piece;
-                        pNormalList[*pNumNormal].toPos = move;
-                        pNormalList[*pNumNormal].flags = MoveFlags::KnightPromotion;
-                        pNormalList[*pNumNormal].score = -1 * PieceScores::KnightScore;
+                        pNormalList[*pNumNormal].toPiece   = Piece::NoPiece;
+                        pNormalList[*pNumNormal].fromPos   = piece;
+                        pNormalList[*pNumNormal].toPos     = move;
+                        pNormalList[*pNumNormal].flags     = MoveFlags::KnightPromotion;
+                        pNormalList[*pNumNormal].score     = PieceScores::KnightScore;
                         *pNumNormal += 1;
 
                         pNormalList[*pNumNormal].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
-                        pNormalList[*pNumNormal].toPiece = Piece::NoPiece;
-                        pNormalList[*pNumNormal].fromPos = piece;
-                        pNormalList[*pNumNormal].toPos = move;
-                        pNormalList[*pNumNormal].flags = MoveFlags::RookPromotion;
-                        pNormalList[*pNumNormal].score = -1 * PieceScores::RookScore;
+                        pNormalList[*pNumNormal].toPiece   = Piece::NoPiece;
+                        pNormalList[*pNumNormal].fromPos   = piece;
+                        pNormalList[*pNumNormal].toPos     = move;
+                        pNormalList[*pNumNormal].flags     = MoveFlags::RookPromotion;
+                        pNormalList[*pNumNormal].score     = PieceScores::RookScore;
                         *pNumNormal += 1;
 
                         // let the normal insertion handle this
-                        flags = MoveFlags::BishopPromotion;
-                        extraScore = -1 * PieceScores::BishopScore;
+                        flags      = MoveFlags::BishopPromotion;
+                        extraScore = PieceScores::BishopScore;
                     }
                 }
 

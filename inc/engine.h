@@ -4,19 +4,20 @@
 #include "../inc/util.h"
 #include "../inc/transTable.h"
 #include <chrono>
+#include <atomic>
 
 // Most Valuble Victim Least Valuble Attacker Array.
-// Array indexed by [attacker][attackee] (attacker is the row, attacked is the column).  A more
-// negative number is better for this.  So for example arr[pawn][king] means a pawn capturing a king
-// would have a value of -56, the best possible option.  Or for example, a pawn capturing a queen (-46)
-// is going to be treated better than a queen capturing a queen (-42).
-                                     //k   q    r    b    n    p 
-constexpr int32 MVVLVA_arr[6][6] = { {-56, -46, -36, -26, -16, -6},   //p
-                                     {-55, -45, -35, -25, -15, -5},   //n
-                                     {-54, -44, -34, -24, -14, -4},   //b
-                                     {-53, -43, -33, -23, -13, -3},   //r
-                                     {-52, -42, -32, -22, -12, -2},   //q
-                                     {-51, -41, -31, -21, -11, -1} }; //k
+// Array indexed by [attacker][attackee] (attacker is the row, attacked is the column). So for 
+// example arr[pawn][king] means a pawn capturing a king would have a value of -56, the best
+// possible option.  Or for example, a pawn capturing a queen (-46) is going to be treated better
+// than a queen capturing a queen (-42).
+                                     //k   q   r   b   n  p
+constexpr int32 MVVLVA_arr[6][6] = { {41, 31, 21, 12, 11, 1},   //k
+                                     {42, 32, 22, 13, 12, 2},   //q
+                                     {43, 33, 23, 14, 13, 3},   //r
+                                     {44, 34, 24, 15, 14, 4},   //b
+                                     {45, 35, 25, 16, 15, 5},   //n
+                                     {46, 36, 26, 17, 16, 6} }; //p
 
 constexpr uint32 MaxEngineDepth = 64;
 constexpr int32 PosCheckMateScore =  0x6FFF;
@@ -30,7 +31,7 @@ constexpr int32 TTScoreNotFound        = -0x5FF0;
 constexpr uint32 MainTransTableSize    = 8000009; //15485867;  // large-ish prime
 constexpr uint32 QSearchTransTableSize =  999983; // 999983;
 
-constexpr int32 CastleScore = -10;
+constexpr int32 CastleScore = 150;
 
 constexpr uint32 NumBestMoves   = 1;
 constexpr uint32 NumKillerMoves = 2;
@@ -107,7 +108,10 @@ public:
     void Init(Board* pBoard);
     void Destroy();
 
-    Move DoEngine(EngineSettings settings, uint32* pMaxDepth = nullptr, bool* isMoveLegal = nullptr);
+    Move DoEngine(EngineSettings     settings,
+                  std::atomic<bool>& isTimedOut,
+                  uint32*            pMaxDepth = nullptr,
+                  bool*              pIsMoveLegal = nullptr);
 
     void DoPerft(uint32 depth, bool isWhite, bool expanded);
 
@@ -120,10 +124,20 @@ public:
     void ResetPerftStats();
 
     template<bool isWhite, bool onPlyZero>
-    int32 Negmax(int32 depth, uint32 ply, Move* bestMove, int32 alpha, int32 beta, SearchSettings searchSettings);
+    int32 Negmax(int32              depth,
+                 uint32             ply,
+                 Move*              bestMove,
+                 int32              alpha,
+                 int32              beta,
+                 SearchSettings     searchSettings,
+                 std::atomic<bool>& isTimedOut);
 
     template<bool isWhite>
-    int32 QuiscenceSearch(uint32 ply, int32 alpha, int32 beta, SearchSettings settings);
+    int32 QuiscenceSearch(uint32             ply, 
+                          int32              alpha,
+                          int32              beta,
+                          SearchSettings     settings,
+                          std::atomic<bool>& isTimedOut);
 
     void ResetTransTable() { m_mainSearchTransTable.ResetTable(); m_qSearchTransTable.ResetTable(); }
 
@@ -132,11 +146,12 @@ public:
 private:
     template<bool isWhite>
     Move IterativeDeepening(
-        uint32 depth, 
-        TimeType searchTime, 
-        bool useTime, 
-        SearchSettings searchSettings, 
-        uint32* pMaxDepth = nullptr);
+        uint32              depth, 
+        TimeType            searchTime, 
+        bool                useTime, 
+        SearchSettings      searchSettings,
+        std::atomic<bool>&  isTimedOut,
+        uint32*             pMaxDepth = nullptr);
 
     void InsertKillerMove(const Move& move, uint32 ply);
 
@@ -144,6 +159,10 @@ private:
     TranspositionTable m_qSearchTransTable;
     Board*  m_pBoard;
     Move*** m_pppMoveLists;
+
+    // used for detecting draws
+    uint64  m_previousZobKeys[MaxEngineDepth];
+    uint64  m_plyOfLastIrreversableMove;
 
     struct
     {
@@ -159,6 +178,7 @@ private:
         uint64  lateMoveReductions;
         uint64  nullWindowReSearches;
         uint64  numKillerMoves;
+        uint64  drawsDetected;
     } m_searchValues;
 
     bool IsMoveGoodForQsearch(const Move& move, bool inCheck);

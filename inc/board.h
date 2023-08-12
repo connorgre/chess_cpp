@@ -1,6 +1,7 @@
 #pragma once
 #include "util.h"
 #include <string>
+#include <vector>
 
 enum Piece : uint32
 {
@@ -33,6 +34,21 @@ enum PieceScores : int32
     KnightScore = 300,
     PawnScore   = 100,
 
+    PawnOneAwayFromCastledKing =  30,
+    PawnTwoAwayFromCastledKing =  15,
+    NormalPieceTouchingKing    =   5,
+    CutoffKingMoveScore        = -15,
+
+    PawnChainScore        =  10,
+    DoubledPawnScore      = -70,
+    FarPassedPawnScore    =  PawnScore / 2,     // extra points for passed pawns
+    MidPassedPawnScore    =  PawnScore,
+    ClosePassedPawnScore  =  PawnScore * 2,
+    FarPawnAdvanceScore   =  -5,            // Lose points for unpushed pawns
+    MidPawnAdvanceScore   =   5,
+    ClosePawnAdvanceScore =  20,
+
+    GeneralMobilityScore  =   1,            // Points for having legal moves
 };
 
                                       // white scores
@@ -52,20 +68,28 @@ constexpr int32 PieceValueArray[] = { PieceScores::KingScore,
                                       //NoMove score
                                       0 };
 
+// rooks gain more value with less pawns, knights lose value with less pawns
+constexpr int32 RookAdjustmentScores[]   = { 15,  12,  9, 6, 3, 0, -3, -6, -9};
+constexpr int32 KnightAdjustmentScores[] = {-15, -10, -5, 0, 4, 8, 12,  15, 20};
+
+// This will be passed pawn pushes, promotions, castles, and maybe some other stuff.
+constexpr uint32 MaxNumProbablyGoodMoves = 16;
 enum MoveTypes : uint32
 {
-    Best   = 0,
-    Attack = 1,
-    Killer = 2,
-    Normal = 3,
+    Best             = 0,
+    ProbablyGood     = 1,
+    Attack           = 2,
+    Killer           = 3,
+    Normal           = 4,
 
     MoveTypeCount,
 };
 
-static constexpr uint32 MaxPieces = 32;
-static constexpr uint32 MaxPiecesPerSide = 16;
-static constexpr uint32 MaxPawn = 8;
+static constexpr uint32 MaxPieces           = 32;
+static constexpr uint32 MaxPiecesPerSide    = 16;
+static constexpr uint32 MaxPawn             = 8;
 static constexpr uint32 MaxMovesPerPosition = 192;  // I think it is technically something like 219
+
 static constexpr bool IsWhitePiece(Piece piece) { return piece <= Piece::wPawn; }
 static constexpr bool IsBlackPiece(Piece piece) { return !IsWhitePiece(piece); }
 
@@ -172,8 +196,17 @@ struct BoardInfo
 
     int32 pieceValueScore;
 
+    uint64 lastPosMoved;
     uint64 lastPosCaptured;
+
+    uint8 numPieceArr[Piece::PieceCount];
+
+    uint32 lastIrreversableMoveNum;
+
+    uint32 currMoveNum;
 };
+
+constexpr uint32 boardInfosize = sizeof(BoardInfo);
 
 class Board
 {
@@ -269,6 +302,9 @@ public:
     uint64 GetLastPosCaptured() { return m_boardState.lastPosCaptured; }
 
     bool GetBoardStateIsWhiteTurn() { return m_boardState.isWhiteTurn; }
+
+    template<bool isWhite>
+    bool IsDrawByRepetition();
 private:
 
     void ResetPieceScore();
@@ -355,11 +391,30 @@ private:
 
     template<Piece pieceType, bool isWhite, bool hasEnPassant> uint64 GetPieceMoves(uint64 pos);
 
+    template<bool isWhite>
+    void UpdateLastIrreversableMove(const Move& move);
+
+    template<bool isWhite>
+    uint64 GetPassedPawnMask()
+    {
+        uint64 teamPawns = GetPawn<isWhite>();
+        uint64 enemyPawn = GetPawn<isWhite>();
+    }
+
+    int32 GetKingSafteyScore(uint64 whiteSeenSquares, uint64 blackSeenSquares);
+    int32 GetPawnBonusScores();
+    int32 GetRookBonusScores();
+    int32 GetKnightBonusScores();
+
     uint64 m_pieces[static_cast<uint32>(Piece::PieceCount)];
     uint64 m_pRayTable[Directions::Count][64];
+
+    std::vector<uint64> m_prevZobKeyVec;
 
     // the reason it isn't 64 is bc there needs to be extra spaces for ep, castling, and 
     uint64** m_ppZobristArray;
 
     BoardInfo m_boardState;
+
+    bool m_fancyPrint;
 };

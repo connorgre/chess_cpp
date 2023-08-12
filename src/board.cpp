@@ -7,9 +7,17 @@ Board::Board()
 m_pieces(),
 m_boardState(),
 m_pRayTable(),
-m_ppZobristArray(nullptr)
+m_ppZobristArray(nullptr),
+m_prevZobKeyVec(),
+m_fancyPrint(false)
 {
-
+    constexpr uint32 PrevZobKeyVecLength = 1024;
+    // unlikely a game will go for more than 512 moves... if it does we segfault...
+    m_prevZobKeyVec.reserve(PrevZobKeyVecLength);
+    for (uint32 idx = 0; idx < PrevZobKeyVecLength; idx++)
+    {
+        m_prevZobKeyVec.push_back(0ull);
+    }
 }
 
 Board::~Board()
@@ -42,6 +50,8 @@ void Board::SetBoardFromFEN(std::string fenStr)
 {
     uint32 fenStrIdx       = 0;
     const uint32 fenStrLen = fenStr.length();
+
+    m_boardState = {};
 
     for (uint32 idx = 0; idx < Piece::PieceCount; idx++)
     {
@@ -224,18 +234,19 @@ void Board::PrintBoard(uint64 pieces)
         uint32 file = GetFile(piece);
         uint32 rank = GetRank(piece);
         pieceBuf[file][rank] = 'x';
+
         if      (IsWhiteKing(piece))   pieceBuf[file][rank] = 'K';
         else if (IsWhiteQueen(piece))  pieceBuf[file][rank] = 'Q';
         else if (IsWhiteRook(piece))   pieceBuf[file][rank] = 'R';
         else if (IsWhiteBishop(piece)) pieceBuf[file][rank] = 'B';
         else if (IsWhiteKnight(piece)) pieceBuf[file][rank] = 'N';
-        else if (IsWhitePawn(piece))   pieceBuf[file][rank] = 'P';
+        else if (IsWhitePawn(piece))   pieceBuf[file][rank] = 'W';
         else if (IsBlackKing(piece))   pieceBuf[file][rank] = 'k';
         else if (IsBlackQueen(piece))  pieceBuf[file][rank] = 'q';
         else if (IsBlackRook(piece))   pieceBuf[file][rank] = 'r';
         else if (IsBlackBishop(piece)) pieceBuf[file][rank] = 'b';
         else if (IsBlackKnight(piece)) pieceBuf[file][rank] = 'n';
-        else if (IsBlackPawn(piece))   pieceBuf[file][rank] = 'p';
+        else if (IsBlackPawn(piece))   pieceBuf[file][rank] = 'Z';
         idx++;
     }
 
@@ -245,6 +256,14 @@ void Board::PrintBoard(uint64 pieces)
         uint32 rank = GetRank(m_boardState.enPassantSquare);
 
         pieceBuf[file][rank] = '#';
+    }
+
+    if (m_boardState.lastPosMoved != 0ull)
+    {
+        uint32 file = GetFile(m_boardState.lastPosMoved);
+        uint32 rank = GetRank(m_boardState.lastPosMoved);
+
+        pieceBuf[file][rank] = '+';
     }
 
     char printBuf[1024];
@@ -426,7 +445,7 @@ void Board::MakeMove(const Move& move)
                               (move.toPiece != Piece::wPawn)   &&
                               (move.toPiece != Piece::bPawn);
     m_boardState.lastPosCaptured = (isCaptureOfNonPawn) ? move.toPos : 0ull;
-
+    m_boardState.lastPosMoved = move.fromPos;
     // Switch the team.
     m_boardState.zobristKey ^= m_ppZobristArray[0][65];
     m_boardState.isWhiteTurn = !m_boardState.isWhiteTurn;
@@ -434,6 +453,8 @@ void Board::MakeMove(const Move& move)
     // These aren't valid anymore
     m_boardState.checkAndPinMasksValid = false;
     m_boardState.illegalKingMovesValid = false;
+
+    m_boardState.numPieceArr[move.toPiece] -= 1;
 
     // Take out EP zobrist
     if (m_boardState.enPassantSquare != 0ull)
@@ -483,6 +504,9 @@ void Board::MakeMove(const Move& move)
     {
         CH_ASSERT(false);
     }
+
+    UpdateLastIrreversableMove<isWhite>(move);
+    m_boardState.currMoveNum++;
 }
 
 template void Board::MakeMove<true>(const Move& move);
@@ -532,6 +556,8 @@ std::string Board::GetStringFromMove(const Move& move)
 template<bool isWhite>
 void Board::MakeNullMove()
 {
+    m_boardState.lastPosMoved    = 0ull;
+    m_boardState.lastPosCaptured = 0ull;
     // Switch the team.
     m_boardState.zobristKey ^= m_ppZobristArray[0][65];
     m_boardState.isWhiteTurn = !m_boardState.isWhiteTurn;
@@ -547,6 +573,12 @@ void Board::MakeNullMove()
         m_boardState.zobristKey ^= m_ppZobristArray[Piece::NoPiece][epIdx];
     }
     m_boardState.enPassantSquare = 0ull;
+
+
+    Move nullMove = {};
+    nullMove.flags = 0xFF;
+    UpdateLastIrreversableMove<isWhite>(nullMove);
+    m_boardState.currMoveNum++;
 }
 
 template void Board::MakeNullMove<true>();
@@ -855,27 +887,6 @@ void Board::MakePromotionMove(const Move& move)
     m_boardState.enPassantSquare = 0;
 }
 
-template<bool isWhite>
-int32 Board::ScoreBoard()
-{
-    /*
-    int32 score = 0;
-
-    score += QueenScore  * (PopCount(WQueen())  - PopCount(BQueen()));
-    score += RookScore   * (PopCount(WRook())   - PopCount(BRook()));
-    score += BishopScore * (PopCount(WBishop()) - PopCount(BBishop()));
-    score += KnightScore * (PopCount(WKnight()) - PopCount(BKnight()));
-    score += PawnScore   * (PopCount(WPawn())   - PopCount(BPawn()));
-    */
-    constexpr int32 multFactor = (isWhite) ? 1 : -1;
-    int32 score = m_boardState.pieceValueScore;
-    score *= multFactor;
-
-    return score;
-}
-template int32 Board::ScoreBoard<true>();
-template int32 Board::ScoreBoard<false>();
-
 void Board::InitZobArray()
 {
     CH_ASSERT(m_ppZobristArray == nullptr);
@@ -959,11 +970,237 @@ void Board::ResetPieceScore()
 {
     int32 score = 0;
 
-    score += QueenScore * (PopCount(WQueen()) - PopCount(BQueen()));
-    score += RookScore * (PopCount(WRook()) - PopCount(BRook()));
+    for (uint32 pieceIdx = 0; pieceIdx < Piece::PieceCount; pieceIdx++)
+    {
+        m_boardState.numPieceArr[pieceIdx] = PopCount(m_pieces[pieceIdx]);
+    }
+
+    score += QueenScore  * (PopCount(WQueen())  - PopCount(BQueen()));
+    score += RookScore   * (PopCount(WRook())   - PopCount(BRook()));
     score += BishopScore * (PopCount(WBishop()) - PopCount(BBishop()));
     score += KnightScore * (PopCount(WKnight()) - PopCount(BKnight()));
-    score += PawnScore * (PopCount(WPawn()) - PopCount(BPawn()));
+    score += PawnScore   * (PopCount(WPawn())   - PopCount(BPawn()));
 
     m_boardState.pieceValueScore = score;
 }
+
+// Updates last irreversable ply if our move is irreversable.  Also returns the previous ply to make
+// undoing the move simpler
+template<bool isWhite>
+void Board::UpdateLastIrreversableMove(const Move& move)
+{
+    // Irreversable moves are pawn pushes, captures, and special moves (castle/promotion/ep)
+    const bool isMoveIrreversable = (move.fromPiece == Piece::wPawn) ||
+                                    (move.fromPiece == Piece::bPawn) ||
+                                    (move.toPiece != Piece::NoPiece) ||
+                                    (move.flags != 0);
+
+    uint32 insertNum = m_boardState.currMoveNum;
+    if (isWhite)
+    {
+        insertNum = (insertNum + 1) & ~1;
+    }
+    else
+    {
+        insertNum = (insertNum & ~1) + 1;
+    }
+
+    if (isMoveIrreversable)
+    {
+        m_boardState.lastIrreversableMoveNum = insertNum;
+    }
+
+    CH_ASSERT(insertNum < 1024);
+    m_prevZobKeyVec[insertNum] = m_boardState.zobristKey;
+}
+
+template<bool isWhite>
+bool Board::IsDrawByRepetition()
+{
+    uint32 startIdx = m_boardState.lastIrreversableMoveNum;
+
+    if (isWhite)
+    {
+        startIdx = (startIdx + 1) & ~1;
+    }
+    else
+    {
+        startIdx = (startIdx & ~1) + 1;
+    }
+
+    uint32 endIdx = m_boardState.currMoveNum;
+
+    CH_ASSERT(startIdx <= endIdx+1);
+
+    uint32 numRepeated = 0;
+    for (uint32 idx = startIdx; idx < endIdx; idx += 2)
+    {
+        if (m_prevZobKeyVec[idx] == m_boardState.zobristKey)
+        {
+            numRepeated++;
+        }
+    }
+
+    return numRepeated >= 2;
+}
+
+template bool Board::IsDrawByRepetition<true>();
+template bool Board::IsDrawByRepetition<false>();
+
+template<bool isWhite>
+int32 Board::ScoreBoard()
+{
+    // This could be optimized to only copy/restore what's absolutley necessary...
+    BoardInfo boardStateCopy = m_boardState;
+    InvalidateCheckPinAndIllegalMoves();
+
+    int32 score = m_boardState.pieceValueScore;
+
+    uint64 whiteSliderSquares = GetSliderSeenSquares<true>(FullBoard);
+    uint64 whiteMoveSquares   = GetPawnKnightKingSeenSquares<true>();
+    uint64 whiteMoves         = whiteSliderSquares | whiteMoveSquares;
+
+    uint64 blackSliderSquares = GetSliderSeenSquares<false>(FullBoard);
+    uint64 blackMoveSquares   = GetPawnKnightKingSeenSquares<false>();
+    uint64 blackMoves         = blackSliderSquares | blackMoveSquares;
+    
+
+    score += GetKingSafteyScore(whiteMoves, blackMoves);
+    score += GetPawnBonusScores();
+    score += GetRookBonusScores();
+    score += GetKnightBonusScores();
+
+
+    int32 whiteMobilityScore = GeneralMobilityScore * (PopCount(GetWhitePieces() & whiteMoves));
+    int32 blackMobilityScore = GeneralMobilityScore * (PopCount(GetBlackPieces() & blackMoves));
+
+    score += (whiteMobilityScore - blackMobilityScore);
+
+    constexpr int32 multFactor = (isWhite) ? 1 : -1;
+    score *= multFactor;
+
+
+    // Without queens rooks or pawns, this is probably a drawn game
+    const bool probablyDraw = (GetQueen<true>() | GetQueen<false>() |
+                               GetRook<true>()  | GetRook<false>()  |
+                               GetPawn<true>()  | GetPawn<false>()) == 0ull;
+    if (probablyDraw)
+    {
+        score /= 10;
+    }
+
+    m_boardState = boardStateCopy;
+
+    // drop the low 4 bits, helps TT
+    score &= ~0xF;
+    return score;
+}
+
+int32 Board::GetKingSafteyScore(uint64 whiteSeenSquares, uint64 blackSeenSquares)
+{
+    // white king
+    int32 whiteKingScore = 0;
+    uint64 whiteKingPos = (GetKing<true>() & (WhiteKingSideCastleLand | WhiteQueenSideCastleLand));
+
+    uint64 whiteKingMoves = GetKingMoves<true, true>(whiteKingPos);
+
+    uint64 whiteKingTouchingPawns = whiteKingMoves & GetPawn<true>();
+    whiteKingScore += PawnOneAwayFromCastledKing * PopCount(whiteKingTouchingPawns);
+    whiteKingScore += PawnTwoAwayFromCastledKing * PopCount(MoveUp(whiteKingMoves) & ~whiteKingTouchingPawns);
+    whiteKingScore += CutoffKingMoveScore        * PopCount(whiteKingMoves & blackSeenSquares);
+    whiteKingScore += NormalPieceTouchingKing    * PopCount(whiteKingMoves & GetWhitePieces());
+
+
+    // black king
+    int32 blackKingScore = 0;
+    uint64 blackKingPos = (GetKing<false>() & (BlackKingSideCastleLand | BlackQueenSideCastleLand));
+
+    uint64 blackKingMoves = GetKingMoves<false, true>(blackKingPos);
+
+    uint64 blackKingTouchingPawns = blackKingMoves & GetPawn<false>();
+    blackKingScore += PawnOneAwayFromCastledKing * PopCount(blackKingTouchingPawns);
+    blackKingScore += PawnTwoAwayFromCastledKing * PopCount(MoveUp(blackKingMoves) & ~blackKingTouchingPawns);
+    blackKingScore += CutoffKingMoveScore        * PopCount(blackKingMoves & whiteSeenSquares);
+    blackKingScore += NormalPieceTouchingKing    * PopCount(blackKingMoves & GetWhitePieces());
+
+    return whiteKingScore - blackKingScore;
+}
+
+int32 Board::GetPawnBonusScores()
+{
+    int32 whiteScore = 0;
+    uint64 whitePawns = GetPawn<true>();
+    uint64 whitePawnsDefendingPawns = (MoveUpRight(whitePawns) | (MoveUpLeft(whitePawns))) & whitePawns;
+    uint64 whiteDoubledPawns        = MoveUp(whitePawns) & whitePawns;
+
+    whiteScore += PawnChainScore   * PopCount(whitePawnsDefendingPawns);
+    whiteScore += DoubledPawnScore * PopCount(whiteDoubledPawns);
+
+    int32 blackScore = 0;
+    uint64 blackPawns = GetPawn<false>();
+    uint64 blackPawnsDefendingPawns = (MoveUpRight(blackPawns) | (MoveUpLeft(blackPawns))) & blackPawns;
+    uint64 blackDoubledPawns        = MoveUp(blackPawns) & blackPawns;
+
+    blackScore += PawnChainScore   * PopCount(blackPawnsDefendingPawns);
+    blackScore += DoubledPawnScore * PopCount(blackDoubledPawns);
+
+    uint64 whitePawnKillMask = whitePawns | MoveLeft(whitePawns) | MoveRight(whitePawns);
+    uint64 blackPawnKillMask = blackPawns | MoveLeft(blackPawns) | MoveRight(blackPawns);
+
+    uint64 whitePassedPawns = whitePawns;
+    uint64 blackPassedPawns = blackPawns;
+
+    for (uint32 idx = 0; idx < 5; idx++)
+    {
+        whitePassedPawns = MoveUp(whitePassedPawns)   & ~blackPawnKillMask;
+        blackPassedPawns = MoveDown(blackPassedPawns) & ~whitePawnKillMask;
+    }
+
+    if (whitePassedPawns != 0ull)
+    {
+        whiteScore += FarPassedPawnScore   * PopCount(whitePassedPawns & (Rank2 | Rank3));
+        whiteScore += MidPassedPawnScore   * PopCount(whitePassedPawns & (Rank4 | Rank5));
+        whiteScore += ClosePassedPawnScore * PopCount(whitePassedPawns & (Rank6 | Rank7));
+
+    }
+    if (blackPassedPawns != 0ull)
+    {
+        blackScore += FarPassedPawnScore   * PopCount(blackPassedPawns & (Rank7 | Rank6));
+        blackScore += MidPassedPawnScore   * PopCount(blackPassedPawns & (Rank5 | Rank4));
+        blackScore += ClosePassedPawnScore * PopCount(blackPassedPawns & (Rank3 | Rank2));
+    }
+
+    whiteScore += FarPawnAdvanceScore  * PopCount(whitePawns & (Rank2 | Rank3));
+    whiteScore += MidPawnAdvanceScore  * PopCount(whitePawns & (Rank4 | Rank5));
+    whiteScore += ClosePassedPawnScore * PopCount(whitePawns & (Rank6 | Rank7));
+
+    blackScore += FarPawnAdvanceScore  * PopCount(blackPawns & (Rank7 | Rank6));
+    blackScore += MidPawnAdvanceScore  * PopCount(blackPawns & (Rank5 | Rank4));
+    blackScore += ClosePassedPawnScore * PopCount(blackPawns & (Rank3 | Rank2));
+
+    return whiteScore - blackScore;
+}
+
+
+// I should add open files
+int32 Board::GetRookBonusScores()
+{
+    uint32 numWhitePawns = m_boardState.numPieceArr[wPawn];
+    uint32 numBlackPawns = m_boardState.numPieceArr[bPawn];
+    int32 whiteScore = m_boardState.numPieceArr[wRook] * RookAdjustmentScores[numWhitePawns];
+    int32 blackScore = m_boardState.numPieceArr[bRook] * RookAdjustmentScores[numBlackPawns];
+
+    return whiteScore - blackScore;
+}
+
+int32 Board::GetKnightBonusScores()
+{
+    uint32 numWhitePawns = m_boardState.numPieceArr[wPawn];
+    uint32 numBlackPawns = m_boardState.numPieceArr[bPawn];
+    int32 whiteScore = m_boardState.numPieceArr[wKnight] * KnightAdjustmentScores[numWhitePawns];
+    int32 blackScore = m_boardState.numPieceArr[bKnight] * KnightAdjustmentScores[numBlackPawns];
+
+    return whiteScore - blackScore;
+}
+template int32 Board::ScoreBoard<true>();
+template int32 Board::ScoreBoard<false>();

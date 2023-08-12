@@ -11,6 +11,25 @@ enum U64Walls : uint64
     Border = 0xFF818181818181FFull
 };
 
+// Moves piece by 1, 0 for bits that wrap around the board
+static constexpr uint64 MoveUp(uint64 pos) { return (pos & ~U64Walls::Top) << 8; }
+static constexpr uint64 MoveDown(uint64 pos) { return (pos & ~U64Walls::Bottom) >> 8; }
+static constexpr uint64 MoveLeft(uint64 pos) { return (pos & ~U64Walls::Left) >> 1; }
+static constexpr uint64 MoveRight(uint64 pos) { return (pos & ~U64Walls::Right) << 1; }
+
+enum Ranks : uint64
+{
+    Rank1 = Bottom,
+    Rank2 = MoveUp(Rank1),
+    Rank3 = MoveUp(Rank2),
+    Rank4 = MoveUp(Rank3),
+    Rank5 = MoveUp(Rank4),
+    Rank6 = MoveUp(Rank5),
+    Rank7 = MoveUp(Rank6),
+    Rank8 = MoveUp(Rank7),
+};
+static_assert(Rank8 == Top);
+
 // takes 0-63 and gets the u64 for it
 static constexpr uint64 IndexToPosition(uint32 idx) { return 1ull << idx; }
 
@@ -49,11 +68,7 @@ static constexpr uint32 PopCount(uint64 pos)
     return pos;
 }
 
-// Moves piece by 1, 0 for bits that wrap around the board
-static constexpr uint64 MoveUp(uint64 pos)    { return (pos & ~U64Walls::Top)    << 8; }
-static constexpr uint64 MoveDown(uint64 pos)  { return (pos & ~U64Walls::Bottom) >> 8; }
-static constexpr uint64 MoveLeft(uint64 pos)  { return (pos & ~U64Walls::Left)   >> 1; }
-static constexpr uint64 MoveRight(uint64 pos) { return (pos & ~U64Walls::Right)  << 1; }
+
 
 static constexpr uint64 MoveUpLeft(uint64 pos)    
     { return (pos & ~(U64Walls::Top    | U64Walls::Left))  << 7; }

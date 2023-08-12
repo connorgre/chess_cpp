@@ -5,8 +5,12 @@
 #include "../inc/engineSettings.h"
 #include <sstream>
 #include <vector>
+#include <thread>
+#include <chrono>
 
 ChessGame::ChessGame()
+:
+m_lastIrreversableMoveNum(0)
 {
 
 }
@@ -92,13 +96,17 @@ void ChessGame::Run()
                 m_engine.DoPerft(command.perft.depth, command.perft.isWhite, command.perft.expanded);
                 break;
             case (Commands::Engine):
-                m_engine.DoEngine(command.engine.settings);
+                std::atomic<bool> isTimedOut = false;
+                m_engine.DoEngine(command.engine.settings, isTimedOut);
                 break;
             case (Commands::Compare):
-                DoCompareEngines(command.compare.engine1, command.compare.engine2);
+                DoCompareEngines(command.compare.whiteEngine, command.compare.blackEngine);
                 break;
             case (Commands::Error):
                 std::cout << "Invlaid Input" << std::endl;
+                break;
+            case(Commands::Score):
+                std::cout << "Score: " << ((float)m_board.ScoreBoard<true>())/PawnScore << std::endl;
                 break;
             default:
                 CH_ASSERT(false);
@@ -111,34 +119,85 @@ void ChessGame::Run()
     }
 }
 
-void ChessGame::DoCompareEngines(EngineSettings engine1, EngineSettings engine2)
+void ChessGame::DoCompareEngines(EngineSettings whiteEngine, EngineSettings blackEngine)
 {
     int32 checkMateDepth = NotCheckMate;
 
     m_engine.ResetTransTable();
 
+    m_lastIrreversableMoveNum = 0;
+    m_previousZobKeyVec.clear();
+    m_previousZobKeyVec.push_back(0);
+
     auto startTime = std::chrono::steady_clock::now();
 
-    // set a time limit enough for 25 moves per team
-    TimeType timeLimit = engine1.time * 100;
+    // set a time limit enough for 50 moves per team
+    TimeType timeLimit       = whiteEngine.time * 100;
+    TimeType elapsedTime     = TimeType(0);
+    TimeType prevElapsedTime = TimeType(0);
 
-    TimeType elapsedTime = TimeType(0);
-
-    bool engine1Turn = true;
+    bool whitesTurn = m_board.GetBoardStateIsWhiteTurn();
     Move curMove = {};
 
-    bool isMoveLegal = true;
-    while ((elapsedTime < timeLimit) && (isMoveLegal))
+    bool isMoveLegal        = true;
+    bool isDrawByRepetition = false;
+    bool isCheckMate        = false;
+    uint32 moveNum = 0;
+    while ((elapsedTime < timeLimit)     && 
+           (isMoveLegal)                 && 
+           (isDrawByRepetition == false) && 
+           (isCheckMate == false))
     {
-        uint32 maxDepth = 0;
-        if (engine1Turn)
-        {
-            curMove = m_engine.DoEngine(engine1, &maxDepth, &isMoveLegal);
-        }
-        else
-        {
-            curMove = m_engine.DoEngine(engine2, &maxDepth, &isMoveLegal);
-        }
+        uint32 maxDepth      = 0;
+        bool boardThinksDraw = false;
+
+        std::atomic<bool> isTimedOut;
+        std::atomic<bool> moveIsDone;
+
+        isTimedOut.store(false);
+        moveIsDone.store(false);
+
+        std::thread doEngineThread([this,
+                                    whiteEngine, 
+                                    blackEngine,
+                                    &whitesTurn,
+                                    &maxDepth,
+                                    &isMoveLegal,
+                                    &curMove,
+                                    &boardThinksDraw,
+                                    &isTimedOut,
+                                    &moveIsDone]()
+            {
+                if (whitesTurn)
+                {
+                    curMove = m_engine.DoEngine(whiteEngine, isTimedOut, &maxDepth, &isMoveLegal);
+                    boardThinksDraw = m_board.IsDrawByRepetition<true>();
+                }
+                else
+                {
+                    curMove = m_engine.DoEngine(blackEngine, isTimedOut, &maxDepth, &isMoveLegal);
+                    boardThinksDraw = m_board.IsDrawByRepetition<false>();
+                }
+                moveIsDone.store(true);
+            });
+
+        // Launch a thread that will send a timeout signal to the engine if we go over 1.5x the
+        // per move time limit.  Sleeps for 1/8 the time of the move 12 times to avoid accidentally
+        // waiting too long if the engine finishes early.
+        std::thread timeOutThread([&isTimedOut, &moveIsDone, whiteEngine]()
+            {
+                for (uint32 timeOutTries = 0; timeOutTries < 9; timeOutTries++)
+                {
+                    if (moveIsDone.load(std::memory_order_relaxed) == false)
+                    {
+                        std::this_thread::sleep_for(whiteEngine.time / 8);
+                    }
+                }
+                isTimedOut.store(true);
+            });
+
+        timeOutThread.join();
+        doEngineThread.join();
 
         auto curTime = std::chrono::steady_clock::now();
         elapsedTime = std::chrono::duration_cast<TimeType>(curTime - startTime);
@@ -149,22 +208,37 @@ void ChessGame::DoCompareEngines(EngineSettings engine1, EngineSettings engine2)
         std::string moveStr   = m_board.GetStringFromMove(curMove);
         std::string moveScore = m_engine.ConvertScoreToStr(curMove.score, &checkMateDepth);
 
-        if (engine1Turn)
+        isDrawByRepetition = IsDrawByRepetition(m_board.GetZobKey(), moveNum, curMove);
+
+        if (isDrawByRepetition != boardThinksDraw)
         {
-            std::cout << "Engine 1 -- " << moveStr << " : " << moveScore << 
-                                     " -- depth: " << maxDepth << std::endl;
-            engine1Turn = false;
+            std::cout << "IsDrawByRepetition mismatch.  Board thinks: " << boardThinksDraw << std::endl;
+        }
+
+        if (isDrawByRepetition)
+        {
+            moveScore = "Draw by repetiton";
+        }
+
+        if (whitesTurn)
+        {
+            std::cout << "White -- ";
+            whitesTurn = false;
         }
         else
         {
-            std::cout << "Engine 2 -- " << moveStr << " : " << moveScore <<
-                                     " -- depth: " << maxDepth << std::endl;
-            engine1Turn = true;
+            std::cout << "Black -- ";
+            whitesTurn = true;
         }
 
-        if ((-2 <= checkMateDepth) && (checkMateDepth <= 2))
+        uint32 timeDiff = (elapsedTime - prevElapsedTime).count();
+        std::cout << moveStr << " : " << moveScore << " -- depth: " << maxDepth << " -- time: " << timeDiff << std::endl;
+        prevElapsedTime = elapsedTime;
+
+        moveNum++;
+        if ((-1 <= checkMateDepth) && (checkMateDepth <= 1))
         {
-            break;
+            isCheckMate = true;
         }
     }
     if (isMoveLegal == false)
@@ -180,7 +254,36 @@ void ChessGame::DoCompareEngines(EngineSettings engine1, EngineSettings engine2)
         std::cout << "Black pieces" << std::endl;
         m_board.PrintBoard(m_board.GetBlackPieces());
     }
+}
 
+bool ChessGame::IsDrawByRepetition(uint64 zobKey, uint32 moveNum, const Move& move)
+{
+    uint32 startIdx = m_lastIrreversableMoveNum;
+
+    uint32 endIdx = moveNum;
+
+    uint32 numRepeated = 0;
+    for (uint32 idx = startIdx; idx < endIdx; idx++)
+    {
+        if (m_previousZobKeyVec[idx] == zobKey)
+        {
+            numRepeated++;
+        }
+    }
+
+    m_previousZobKeyVec.push_back(zobKey);
+    // Irreversable moves are pawn pushes, captures, and special moves (castle/promotion/ep)
+    const bool isMoveIrreversable = (move.fromPiece == Piece::wPawn) ||
+                                    (move.fromPiece == Piece::bPawn) ||
+                                    (move.toPiece != Piece::NoPiece) ||
+                                    (move.flags != 0);
+
+    if (isMoveIrreversable)
+    {
+        m_lastIrreversableMoveNum = moveNum;
+    }
+
+    return numRepeated >= 2;
 }
 
 InputCommand ChessGame::ParseInput(std::string inputStr)
@@ -250,6 +353,8 @@ InputCommand ChessGame::ParseInput(std::string inputStr)
             case (Commands::Compare):
                 result = ParseCompareCommand(inputWords, &inputCommand);
                 break;
+            case(Commands::Score):
+                break;
             default:
                 CH_ASSERT(false);
                 std::cout << "Invalid Command" << std::endl;
@@ -277,6 +382,7 @@ void ChessGame::GenerateCommandMap()
     m_commandMap["engine"]  = Commands::Engine;
     m_commandMap["search"]  = Commands::Engine;
     m_commandMap["compare"] = Commands::Compare;
+    m_commandMap["score"]   = Commands::Score;
 }
 
 Result ChessGame::ParseMoveCommand(
@@ -570,48 +676,35 @@ Result ChessGame::ParseCompareCommand(
     std::vector<std::string> wordVec,
     InputCommand* pInputCommand)
 {
-    EngineSettings engine1 = {};
-    EngineSettings engine2 = {};
+    EngineSettings whiteEngineSettings = {};
+    EngineSettings blackEngineSettings = {};
 
-    engine1.useTime    = true;
-    engine2.useTime    = true;
-    engine1.printStats = false;
-    engine2.printStats = false;
-    engine1.doMove     = true;
-    engine2.doMove     = true;
+    whiteEngineSettings.useTime    = true;
+    blackEngineSettings.useTime    = true;
+    whiteEngineSettings.printStats = false;
+    blackEngineSettings.printStats = false;
+    whiteEngineSettings.doMove     = true;
+    blackEngineSettings.doMove     = true;
+    whiteEngineSettings.isWhite    = true;
+    blackEngineSettings.isWhite    = false;
 
     // Input format:
-    // Comapre <engine1Color> <timePerMove> <+ engineFlags1 [...]> <+ engineFlags2 [...]>
-    // so the color of the engine who goes first, then the time per move, then a '+', then all of
-    // the engine 1 flags, then a '+' then all the engine2 flags
+    // Comapre <timePerMove> <+ whiteFlags [...]> <+ blackFlags [...]>
+    // the time per move, then a '+', then all of the engine 1 flags, then a '+' then all the
+    // engine2 flags
     Result result = Result::Success;
     uint32 vecLen = wordVec.size();
     uint32 curIdx = 1;
     if (vecLen < 6)
     {
-        return Result::Error;
-    }
-    if (wordVec[curIdx] == "white")
-    {
-        engine1.isWhite = true;
-        engine2.isWhite = false;
-    }
-    else if (wordVec[curIdx] == "black")
-    {
-        engine1.isWhite = false;
-        engine2.isWhite = true;
-    }
-    else
-    {
         return Result::ErrorInvalidInput;
     }
-    curIdx++;
 
     if (IsInteger(wordVec[curIdx]))
     {
         int32 num = std::stoi(wordVec[curIdx]);
-        engine1.time = TimeType(num);
-        engine2.time = TimeType(num);
+        whiteEngineSettings.time = TimeType(num);
+        blackEngineSettings.time = TimeType(num);
         curIdx++;
     }
     else
@@ -648,11 +741,11 @@ Result ChessGame::ParseCompareCommand(
         return Result::ErrorInvalidInput;
     }
 
-    engine1.searchSettings = GetSearchSetting(static_cast<EngineFlags>(engine1Flags));
-    engine2.searchSettings = GetSearchSetting(static_cast<EngineFlags>(engine2Flags));
+    whiteEngineSettings.searchSettings = GetSearchSetting(static_cast<EngineFlags>(engine1Flags));
+    blackEngineSettings.searchSettings = GetSearchSetting(static_cast<EngineFlags>(engine2Flags));
 
-    pInputCommand->compare.engine1 = engine1;
-    pInputCommand->compare.engine2 = engine2;
+    pInputCommand->compare.whiteEngine = whiteEngineSettings;
+    pInputCommand->compare.blackEngine = blackEngineSettings;
 
     return result;
 }
@@ -680,7 +773,7 @@ Result ChessGame::ParseResetCommand(
         }
         else if (wordVec[1] == "1")
         {
-            char fenStr[] = "3qkr/3pp1/6P/7B/8/8/P7/K7 b - -";
+            char fenStr[] = "3qkr/3pp1/6P/7B/8/8/P7/K7 w - -";
             memcpy(pInputCommand->reset.fenStr, fenStr, sizeof(fenStr));
         }
         else if (wordVec[1] == "2")
@@ -699,6 +792,12 @@ Result ChessGame::ParseResetCommand(
         {
             // stockfish says +.4 g5f3
             char fenStr[] = "b3nrk1/8/5q1p/2p1N1N1/p1P1P3/P2PQ2P/2P2PP1/7K w - - 1 26";
+            memcpy(pInputCommand->reset.fenStr, fenStr, sizeof(fenStr));
+        }
+        else if (wordVec[1] == "5")
+        {
+            // stockfish says -.4 f5f7
+            char fenStr[] = "2kr2r1/ppp4p/2npb2b/5q2/4pP1P/3P2N1/PPPB4/2KRQB1R b - - 2 18";
             memcpy(pInputCommand->reset.fenStr, fenStr, sizeof(fenStr));
         }
         else if ((wordVec[1] == "tt") || (wordVec[1] == "transtable"))

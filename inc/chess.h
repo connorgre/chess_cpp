@@ -20,6 +20,7 @@ enum class Commands : uint32
     Perft,
     Engine,
     Compare,
+    Score,
 
     NumCommands,
     Error,
@@ -66,8 +67,8 @@ struct InputCommand
 
         struct
         {
-            EngineSettings engine1;
-            EngineSettings engine2;
+            EngineSettings whiteEngine;
+            EngineSettings blackEngine;
         } compare;
     };
 };
@@ -120,8 +121,14 @@ private:
         InputCommand* pInputCommand
     );
 
+    bool IsDrawByRepetition(uint64 zobKey, uint32 moveNum, const Move& move);
+
     CommandMap         m_commandMap;
     Board              m_board;
     std::vector<Board> m_historyVec;
     ChessEngine        m_engine;
+
+    // used for detecting draws
+    std::vector<uint64>  m_previousZobKeyVec;
+    uint64               m_lastIrreversableMoveNum;
 };
