@@ -17,9 +17,12 @@ static void SetupInitialSearchSettings(SearchSettings* pSettings)
     pSettings->nullWindowSearch       = true;
     pSettings->useKillerMoves         = true;
     pSettings->searchReCaptureFirst   = true;
+    pSettings->doCheckExtension       = true;
+
+    pSettings->quiescenceDepthLimit   = MaxEngineDepth;
 
     pSettings->nullMovePrune          = true;
-    pSettings->nullMoveDepth          = 4;
+    pSettings->nullMoveDepth          = 2;
 
     pSettings->aspirationWindow       = true;
     pSettings->aspirationWindowSize   = PieceScores::PawnScore;
@@ -40,6 +43,9 @@ static void SetupInitialSearchSettings(SearchSettings* pSettings)
     pSettings->numLateMovesDiv        = 10;
     pSettings->lateMoveSub            = 1;
     pSettings->lateMoveDiv            = 2;
+
+    pSettings->doDeltaPruning         = true;
+    pSettings->deltaPruningVal        = 2 * PieceScores::PawnScore;
 }
 
 enum EngineFlags : uint64
@@ -64,6 +70,10 @@ enum EngineFlags : uint64
     StrongNullMove               = 1 << 19,
     StrongFutilityPrune          = 1 << 22,
     StrongExtendedFutilityPrune  = 1 << 23,
+
+    LimitQSearch                 = 1 << 24,
+    NoDeltaPrune                 = 1 << 25,
+    StrongDeltaPrune             = 1 << 26,
 
     Default         =   0,
     NoPrune         =   NoLateMovePrune         |
@@ -119,6 +129,9 @@ static EngineFlags GetFlagFromString(std::string flagStr)
     flagMap["weakprune"]                   = EngineFlags::WeakPrune;
     flagMap["strongprune"]                 = EngineFlags::StrongPrune;
     flagMap["noenhancements"]              = EngineFlags::NoEnhancements;
+    flagMap["limitqsearch"]                = EngineFlags::LimitQSearch;
+    flagMap["nodeltaprune"]                = EngineFlags::NoDeltaPrune;
+    flagMap["strongdeltaprune"]            = EngineFlags::StrongDeltaPrune;
 
     // Check if the value exists in the map
     EngineFlags flag = EngineFlags::ErrorFlag;
@@ -165,7 +178,7 @@ static SearchSettings GetSearchSetting(EngineFlags flags)
 
     if (IsFlagSet(flags, WeakNullMove))
     {
-        settings.nullMoveDepth = 2;
+        settings.nullMoveDepth = 1;
     }
 
     if (IsFlagSet(flags, WeakFutilityPrune))
@@ -195,7 +208,7 @@ static SearchSettings GetSearchSetting(EngineFlags flags)
 
     if (IsFlagSet(flags, StrongNullMove))
     {
-        settings.nullMoveDepth = 5;
+        settings.nullMoveDepth = 3;
     }
 
     if (IsFlagSet(flags, StrongFutilityPrune))
@@ -206,6 +219,21 @@ static SearchSettings GetSearchSetting(EngineFlags flags)
     if (IsFlagSet(flags, StrongExtendedFutilityPrune))
     {
         settings.extendedFutilityCutoff = PieceScores::RookScore - PieceScores::PawnScore;
+    }
+
+    if (IsFlagSet(flags, LimitQSearch))
+    {
+        settings.quiescenceDepthLimit = 2;
+    }
+
+    if (IsFlagSet(flags, NoDeltaPrune))
+    {
+        settings.doDeltaPruning = false;
+    }
+
+    if (IsFlagSet(flags, StrongDeltaPrune))
+    {
+        settings.deltaPruningVal = 3 * PawnScore;
     }
 
     return settings;

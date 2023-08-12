@@ -327,6 +327,10 @@ void Board::GenerateLegalMoves(Move** ppMoveList, uint32* pNumMoves)
     uint32 numCaptures = 0;
     uint32 numNormal   = 0;
 
+    // Generate king moves first, becuase I assume that the king moves will generally be the best
+    // moves
+    GeneratePieceMoves<wKing, isWhite, false, onlyCaptures>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
+
     // If we're in a double check, then we can only move the king.  Don't bother generating the
     // rest of the moves
     if (m_boardState.numPiecesChecking == 0)
@@ -362,8 +366,6 @@ void Board::GenerateLegalMoves(Move** ppMoveList, uint32* pNumMoves)
         GeneratePieceMoves<wRook,   isWhite, false, false>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
         GeneratePieceMoves<wQueen,  isWhite, false, false>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
     }
-
-    GeneratePieceMoves<wKing, isWhite, false, onlyCaptures>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
 
     ppMoveList[MoveTypes::Best][0].fromPiece                   = Piece::EndOfMoveList;
     ppMoveList[MoveTypes::ProbablyGood][numProbGood].fromPiece = Piece::EndOfMoveList;

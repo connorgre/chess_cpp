@@ -122,12 +122,12 @@ void ChessGame::DoCompareEngines(EngineSettings whiteEngine, EngineSettings blac
     int32 checkMateDepth = NotCheckMate;
 
     m_engine.ResetTransTable();
+    m_engine.ResetKillers();
 
     auto startTime = std::chrono::steady_clock::now();
 
-    // run for 1 minute at a time
-    TimeType timeLimit       = TimeType(60000);
     TimeType elapsedTime     = TimeType(0);
+    TimeType lastPrintTime   = TimeType(0);
 
     bool whitesTurn = m_board.GetBoardStateIsWhiteTurn();
     Move curMove = {};
@@ -135,16 +135,36 @@ void ChessGame::DoCompareEngines(EngineSettings whiteEngine, EngineSettings blac
     bool isMoveLegal        = true;
     bool isDrawByRepetition = false;
     bool isCheckMate        = false;
+
+    std::atomic<bool> isTimedOut;
+    isTimedOut.store(false);
+
+    std::atomic<bool> userExit;
+    userExit.store(false);
+
+    // Launch a thread to continuously wait for the user to press enter, when it is pressed, stop
+    // the search.
+    std::thread userExitThread ([&userExit, &isTimedOut]()
+        {
+            std::cin.clear();                                   // clear the error flags set in the input stream
+            std::cin.ignore(std::cin.rdbuf()->in_avail());      // Not really sure...
+
+            char ch[1];
+            std::cin.getline(ch, 1);
+
+            userExit.store(true);
+            isTimedOut.store(true);
+        });
+
     uint32 moveNum = 0;
-    while ((elapsedTime < timeLimit)     && 
-           (isMoveLegal)                 && 
+    while ((isMoveLegal)                 && 
            (isDrawByRepetition == false) && 
-           (isCheckMate == false))
+           (isCheckMate == false)        &&
+           (userExit.load(std::memory_order_relaxed) == false))
     {
         uint32 maxDepth      = 0;
         isDrawByRepetition = false;
 
-        std::atomic<bool> isTimedOut;
         std::atomic<bool> moveIsDone;
 
         auto searchStartTime = std::chrono::steady_clock::now();
@@ -201,8 +221,17 @@ void ChessGame::DoCompareEngines(EngineSettings whiteEngine, EngineSettings blac
         auto curTime = std::chrono::steady_clock::now();
         elapsedTime = std::chrono::duration_cast<TimeType>(curTime - startTime);
 
+        auto timeSinceLastPrint = (elapsedTime - lastPrintTime).count();
+        // try to print about every 4 moves, or 2.5 seconds.  Whichever is longer
+        if ((timeSinceLastPrint > (whiteEngine.time.count() * 4)) && (timeSinceLastPrint > 2500))
+        {
+            m_board.PrintBoard(m_board.GetAllPieces());
+            lastPrintTime = elapsedTime;
+        }
+
         // don't let the engines use each others TT
         m_engine.ResetTransTable();
+        m_engine.ResetKillers();
 
         std::string moveStr   = m_board.GetStringFromMove(curMove);
         std::string moveScore = m_engine.ConvertScoreToStr(curMove.score, &checkMateDepth);
@@ -231,6 +260,9 @@ void ChessGame::DoCompareEngines(EngineSettings whiteEngine, EngineSettings blac
             isCheckMate = true;
         }
     }
+
+    userExitThread.join();
+
     if (isMoveLegal == false)
     {
         std::cout << "Move was illegal" << std::endl;
@@ -571,7 +603,7 @@ Result ChessGame::ParseEngineCommand(
     pInputCommand->engine.settings.doMove         = false;
     pInputCommand->engine.settings.printStats     = true;
     pInputCommand->engine.settings.useTime        = false;
-    pInputCommand->engine.settings.searchSettings = GetSearchSetting(EngineFlags::NoPrune);
+    pInputCommand->engine.settings.searchSettings = GetSearchSetting(static_cast<EngineFlags>(EngineFlags::Default));
 
     uint32 size = wordVec.size();
 
@@ -606,6 +638,24 @@ Result ChessGame::ParseEngineCommand(
         else if (wordVec[word] == "move")
         {
             pInputCommand->engine.settings.doMove = true;
+        }
+        else if (wordVec[word] == "+")
+        {
+            uint64 engineFlags = 0ull;
+            word++;
+            while (word < wordVec.size())
+            {
+                engineFlags |= GetFlagFromString(wordVec[word]);
+                word++;
+            }
+            if (engineFlags != EngineFlags::ErrorFlag)
+            {
+                pInputCommand->engine.settings.searchSettings = GetSearchSetting(static_cast<EngineFlags>(engineFlags));
+            }
+            else
+            {
+                result = Result::ErrorInvalidInput;
+            }
         }
         else
         {

@@ -85,7 +85,7 @@ enum MoveTypes : uint32
     Killer           = 3,
     Normal           = 4,
 
-    MoveTypeCount,
+    MoveTypeCount    = 5,
 };
 
 static constexpr uint32 MaxPieces           = 32;
@@ -208,6 +208,8 @@ struct BoardInfo
     uint32 lastIrreversableMoveNum;
 
     uint32 currMoveNum;
+
+    Move previousMove;
 };
 
 constexpr uint32 boardInfosize = sizeof(BoardInfo);
@@ -309,6 +311,13 @@ public:
 
     template<bool isWhite>
     bool IsDrawByRepetition();
+
+    const BoardInfo& GetBoardState() { return m_boardState; };
+
+    const Move& GetPreviousMove() { return m_boardState.previousMove; }
+
+    bool IsEndGame() { return m_boardState.totalMaterialValue < (2 * (QueenScore + RookScore)); }
+
 private:
 
     void ResetPieceScore();

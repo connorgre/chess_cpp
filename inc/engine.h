@@ -86,6 +86,15 @@ struct SearchSettings
     uint32 lateMoveDiv;
 
     bool   searchReCaptureFirst;    //> Always put re-captures as the best move
+
+    bool   useCounterMoveTable;     //> Order normal using the countermove table.
+
+    bool   doCheckExtension;        //> Increase depth by 1 if we're in check.
+
+    uint32 quiescenceDepthLimit;    //> limit the depth quiescence search can go to.
+
+    bool   doDeltaPruning;          //> don't bother continuing qsearch if move doesn't improve our
+    uint32 deltaPruningVal;         //  score by at least deltaPruningVal
 };
 
 typedef std::chrono::milliseconds TimeType;
@@ -138,11 +147,15 @@ public:
                           int32              alpha,
                           int32              beta,
                           SearchSettings     settings,
-                          std::atomic<bool>& isTimedOut);
+                          std::atomic<bool>& isTimedOut,
+                          uint32             maxFreePly,
+                          uint64             movedPieces=0ull);
 
     void ResetTransTable() { m_mainSearchTransTable.ResetTable(); m_qSearchTransTable.ResetTable(); }
 
     std::string ConvertScoreToStr(int32 score, int32* pCheckMateDepth = nullptr);
+
+    void ResetKillers();
 
 private:
     template<bool isWhite>
@@ -155,15 +168,15 @@ private:
         uint32*             pMaxDepth = nullptr);
 
     void InsertKillerMove(const Move& move, uint32 ply);
+    void InsertCounterMove(const Move& move);
 
     TranspositionTable m_mainSearchTransTable;
     TranspositionTable m_qSearchTransTable;
     Board*  m_pBoard;
     Move*** m_pppMoveLists;
 
-    // used for detecting draws
-    uint64  m_previousZobKeys[MaxEngineDepth];
-    uint64  m_plyOfLastIrreversableMove;
+    // stores the refutation to the previous move
+    Move    m_counterMoveTable[Piece::PieceCount][64];
 
     struct
     {
@@ -180,14 +193,24 @@ private:
         uint64  nullWindowReSearches;
         uint64  numKillerMoves;
         uint64  drawsDetected;
+        uint64  killersIllegal;
     } m_searchValues;
 
-    bool IsMoveGoodForQsearch(const Move& move, bool inCheck);
+    bool IsMoveGoodForQsearch(
+        const Move&           move,
+        const SearchSettings& settings,
+        bool                  inCheck,
+        int32                 standPat,
+        int32                 alpha,
+        uint32                ply,
+        uint32                maxFreePly,
+        uint64                movedPieces);
 
     template<bool isWhite>
     Move GetNextMove(Move** ppMoveList, GetNextMoveData* pData, const SearchSettings& settings);
 
     void SortMoves(Move* pMoveList, const SearchSettings& settings);
+
 };
 
 

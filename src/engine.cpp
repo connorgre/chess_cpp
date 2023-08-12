@@ -11,8 +11,7 @@ ChessEngine::ChessEngine()
 m_pBoard(nullptr),
 m_pppMoveLists(nullptr),
 m_searchValues({}),
-m_plyOfLastIrreversableMove(0),
-m_previousZobKeys()
+m_counterMoveTable()
 {
 
 }
@@ -88,6 +87,8 @@ Move ChessEngine::DoEngine(EngineSettings     settings,
     auto startTime = std::chrono::steady_clock::now();
     bool isMoveLegal = true;
 
+    uint32 maxDepth = 0;
+
     // Make a null move to trade turns to keep the board state consistent
     if (settings.isWhite)
     {
@@ -113,7 +114,7 @@ Move ChessEngine::DoEngine(EngineSettings     settings,
                                             settings.useTime,
                                             settings.searchSettings,
                                             isTimedOut,
-                                            pMaxDepth);
+                                            &maxDepth);
         
         isMoveLegal = m_pBoard->IsMoveLegal<true, true>(bestMove);
         if (settings.doMove && isMoveLegal)
@@ -128,7 +129,7 @@ Move ChessEngine::DoEngine(EngineSettings     settings,
                                              settings.useTime,
                                              settings.searchSettings,
                                              isTimedOut,
-                                             pMaxDepth);
+                                             &maxDepth);
 
         isMoveLegal = m_pBoard->IsMoveLegal<false, true>(bestMove);
         if (settings.doMove && isMoveLegal)
@@ -166,20 +167,26 @@ Move ChessEngine::DoEngine(EngineSettings     settings,
         std::cout << "Positions searched : " << m_searchValues.positionsSearched << std::endl;
         std::cout << "Knps               : " << knps << std::endl;
 
-        std::cout << "Normal Searched       : " << m_searchValues.normalSearched << std::endl;
-        std::cout << "Quiscence searched    : " << m_searchValues.quiscenceSearched << std::endl;
-        std::cout << "TransTable hits       : " << m_searchValues.mainTransTableHits << std::endl;
-        std::cout << "QSearch TT hits       : " << m_searchValues.qTransTableHits << std::endl;
-        std::cout << "Null Move Prunes      : " << m_searchValues.nullMoveCutoffs << std::endl;
-        std::cout << "Futility Prunes       : " << m_searchValues.futilityCutoffs << std::endl;
+        std::cout << "Normal Searched       : " << m_searchValues.normalSearched      << std::endl;
+        std::cout << "Quiscence searched    : " << m_searchValues.quiscenceSearched   << std::endl;
+        std::cout << "TransTable hits       : " << m_searchValues.mainTransTableHits  << std::endl;
+        std::cout << "QSearch TT hits       : " << m_searchValues.qTransTableHits     << std::endl;
+        std::cout << "Null Move Prunes      : " << m_searchValues.nullMoveCutoffs     << std::endl;
+        std::cout << "Futility Prunes       : " << m_searchValues.futilityCutoffs     << std::endl;
         std::cout << "Extended Fut. Prunes  : " << m_searchValues.extendedFutilityCutoffs << std::endl;
         std::cout << "MultiCut Prunes       : " << m_searchValues.multiCutCutoffs     << std::endl;
         std::cout << "Late Move Reductions  : " << m_searchValues.lateMoveReductions  << std::endl;
         std::cout << "Null Window ReSearches: " << m_searchValues.nullWindowReSearches << std::endl;
         std::cout << "Num Killer Moves Done : " << m_searchValues.numKillerMoves      << std::endl;
-        std::cout << "NumDraws              : " << m_searchValues.drawsDetected       << std::endl;
-
+        std::cout << "Illegal killers       : " << m_searchValues.killersIllegal      << std::endl;
+        std::cout << "Num Draws             : " << m_searchValues.drawsDetected       << std::endl;
+        std::cout << "Max Depth             : " << maxDepth                           << std::endl;
         std::cout << std::flush;
+    }
+
+    if (pMaxDepth != nullptr)
+    {
+        *pMaxDepth = maxDepth;
     }
 
     return bestMove;
@@ -445,7 +452,8 @@ int32 ChessEngine::Negmax(
 
     if ((depth <= 0) || (ply >= MaxEngineDepth))
     {
-        int32 score = QuiscenceSearch<isWhite>(ply, alpha, beta, settings, isTimedOut);
+        int32 maxFreePly = ply + settings.quiescenceDepthLimit;
+        int32 score = QuiscenceSearch<isWhite>(ply, alpha, beta, settings, isTimedOut, maxFreePly);
         return score;
     }
     m_searchValues.normalSearched++;
@@ -487,6 +495,11 @@ int32 ChessEngine::Negmax(
         return ttMove.score;
     }
 
+    if (inCheck && settings.doCheckExtension)
+    {
+        depth = depth + 1;
+    }
+
     const bool canFutilityPrune = (settings.futilityPrune) &&
                                   (settings.onPv == false) &&
                                   (depth == 1) &&
@@ -496,7 +509,8 @@ int32 ChessEngine::Negmax(
         int32 futilityScore = m_pBoard->ScoreBoard<isWhite>();
         if (futilityScore < alpha - settings.futilityCutoff)
         {
-            int32 futilityScore = QuiscenceSearch<isWhite>(ply, alpha, beta, settings, isTimedOut);
+            int32 maxFreePly = ply + settings.quiescenceDepthLimit;
+            int32 score = QuiscenceSearch<isWhite>(ply, alpha, beta, settings, isTimedOut, maxFreePly);
             m_searchValues.futilityCutoffs++;
             return futilityScore;
         }
@@ -511,7 +525,8 @@ int32 ChessEngine::Negmax(
         int32 futilityScore = m_pBoard->ScoreBoard<isWhite>();
         if (futilityScore < alpha - settings.extendedFutilityCutoff)
         {
-            int32 futilityScore = QuiscenceSearch<isWhite>(ply, alpha, beta, settings, isTimedOut);
+            int32 maxFreePly = ply + settings.quiescenceDepthLimit;
+            int32 score = QuiscenceSearch<isWhite>(ply, alpha, beta, settings, isTimedOut, maxFreePly);
             m_searchValues.extendedFutilityCutoffs++;
             return futilityScore;
         }
@@ -596,6 +611,11 @@ int32 ChessEngine::Negmax(
             if (multiCutMoveScore >= beta)
             {
                 numBetaCutoffs++;
+                if (settings.useKillerMoves)
+                {
+                    InsertKillerMove(curMove, ply);
+                }
+
                 if (numBetaCutoffs >= settings.multiCutThreshold)
                 {
                     m_searchValues.multiCutCutoffs++;
@@ -708,6 +728,10 @@ int32 ChessEngine::Negmax(
         if (alpha >= beta)
         {
             ttScoreType = TTScoreType::UpperBound;
+            if (settings.useCounterMoveTable)
+            {
+                InsertCounterMove(curMove);
+            }
             if (settings.useKillerMoves)
             {
                 InsertKillerMove(curMove, ply);
@@ -754,7 +778,9 @@ int32 ChessEngine::QuiscenceSearch(
     int32              alpha,
     int32              beta,
     SearchSettings     settings,
-    std::atomic<bool>& isTimedOut)
+    std::atomic<bool>& isTimedOut,
+    uint32             maxFreePly,
+    uint64             movedPieces)
 {
     if (isTimedOut.load(std::memory_order_relaxed) == true)
     {
@@ -778,8 +804,8 @@ int32 ChessEngine::QuiscenceSearch(
         return beta;
     }
 
-    // futility/delta pruning
-    if (standPatScore < (alpha - PieceScores::QueenScore))
+    // futility pruning
+    if (standPatScore < (alpha - (PieceScores::QueenScore + PieceScores::RookScore)))
     {
         return alpha;
     }
@@ -814,7 +840,7 @@ int32 ChessEngine::QuiscenceSearch(
         m_pBoard->GenerateLegalMoves<isWhite, true>(ppMoveList);
     }
 
-    if (ttMoveValid && IsMoveGoodForQsearch(ttMove, inCheck))
+    if (ttMoveValid)
     {
         ppMoveList[MoveTypes::Best][0] = ttMove;
     }
@@ -837,16 +863,35 @@ int32 ChessEngine::QuiscenceSearch(
     bool didMove = false;
     GetNextMoveData nextMoveData = InitGetNextMoveData();
     Move            curMove      = GetNextMove<isWhite>(ppMoveList, &nextMoveData, settings);
+
     while (curMove.fromPiece != Piece::EndOfMoveList)
     {
         // Once we're just capturing pawns, break out.
-        if (IsMoveGoodForQsearch(curMove, inCheck) == false)
+        const bool doMove = IsMoveGoodForQsearch(curMove,
+                                                 settings,
+                                                 inCheck,
+                                                 standPatScore,
+                                                 alpha,
+                                                 ply,
+                                                 maxFreePly,
+                                                 movedPieces);
+        if (doMove == false)
         {
-            break;
+            curMove = GetNextMove<isWhite>(ppMoveList, &nextMoveData, settings);
+            continue;
         }
+
+        uint64 newMovedPieces = movedPieces | curMove.toPos;
+
         m_pBoard->MakeMove<isWhite>(curMove);
         didMove = true;
-        int32 moveScore = QuiscenceSearch<!isWhite>(ply + 1, beta * -1, alpha * -1, settings, isTimedOut);
+        int32 moveScore = QuiscenceSearch<!isWhite>(ply + 1,
+                                                    beta * -1,
+                                                    alpha * -1,
+                                                    settings,
+                                                    isTimedOut,
+                                                    maxFreePly,
+                                                    newMovedPieces);
         // Flip the sign since this is negmax
         moveScore *= -1;
 
@@ -874,10 +919,11 @@ int32 ChessEngine::QuiscenceSearch(
     {
         m_qSearchTransTable.InsertToTable(m_pBoard->GetZobKey(), 0, bestMove, ttScoreType);
     }
-    else
+    else if (inCheck)
     {
-        bestScore = 0ull;
+        bestScore = NegCheckMateScore + ply;
     }
+
     return bestScore;
 }
 
@@ -977,19 +1023,41 @@ void ChessEngine::SortMoves(Move* pMoveList, const SearchSettings& settings)
     }
 }
 
-bool ChessEngine::IsMoveGoodForQsearch(const Move& move, bool inCheck)
+// A move is good for qsearch if:
+//      - we are in check
+//      - (capturing > pawn or promoting) AND (we're recapturing a piece if we are passed the max free ply)
+bool ChessEngine::IsMoveGoodForQsearch(
+    const Move&           move,
+    const SearchSettings& settings,
+    bool                  inCheck,
+    int32                 standPat,
+    int32                 alpha,
+    uint32                ply,
+    uint32                maxFreePly,
+    uint64                movedPieces)
 {
     // don't check pawn captures in Qsearch.
     bool isCaptureOfNonPawn = (move.toPiece != Piece::NoPiece) &&
                               (move.toPiece != Piece::wPawn)   &&
                               (move.toPiece != Piece::bPawn);
-    bool isPromotion        = ((move.flags & MoveFlags::Promotion) != 0ull);
-    return isCaptureOfNonPawn || inCheck || isPromotion;
+    bool isPromotion        = ((move.flags & MoveFlags::Promotion) != 0);
+
+    bool reCapturingPiece   = ((move.toPos & movedPieces) != 0ull);
+    bool belowMaxFreePly    = ply < maxFreePly;
+
+    bool isMoveDeltaPruned  = settings.doDeltaPruning                       &&
+                              (standPat + settings.deltaPruningVal < alpha) &&
+                              (m_pBoard->IsEndGame() == false);
+
+    return ((isCaptureOfNonPawn || isPromotion)     &&
+            (reCapturingPiece   || belowMaxFreePly) &&
+            (isMoveDeltaPruned == false))           ||
+           inCheck;
 }
 
 void ChessEngine::InsertKillerMove(const Move& move, uint32 ply)
 {
-    if (move.fromPiece != Piece::NoPiece)
+    if (move.toPiece == Piece::NoPiece)
     {
         Move* killerMoves = m_pppMoveLists[ply][MoveTypes::Killer];
         Move currKiller = killerMoves[0];
@@ -1002,6 +1070,24 @@ void ChessEngine::InsertKillerMove(const Move& move, uint32 ply)
             memcpy(&(killerMoves[1]), &(killerMoves[0]), sizeof(Move));
             memcpy(&(killerMoves[0]), &move, sizeof(Move));
         }
+    }
+}
+
+void ChessEngine::ResetKillers()
+{
+    for (uint32 ply = 0; ply < MaxEngineDepth; ply++)
+    {
+        m_pppMoveLists[ply][MoveTypes::Killer][0].fromPiece = Piece::EndOfMoveList;
+        m_pppMoveLists[ply][MoveTypes::Killer][1].fromPiece = Piece::EndOfMoveList;
+    }
+}
+
+void ChessEngine::InsertCounterMove(const Move& move)
+{
+    if (move.toPiece == Piece::NoPiece)
+    {
+        const Move prevMove = m_pBoard->GetPreviousMove();
+        m_counterMoveTable[prevMove.fromPiece][prevMove.toPiece] = move;
     }
 }
 
@@ -1063,6 +1149,7 @@ Move ChessEngine::GetNextMove(Move** ppMoveList, GetNextMoveData* pData, const S
         bool isLegal = m_pBoard->IsMoveLegal<isWhite>(curMove);
         if (isLegal == false)
         {
+            m_searchValues.killersIllegal++;
             curMove = GetNextMove<isWhite>(ppMoveList, pData, settings);
         }
     }

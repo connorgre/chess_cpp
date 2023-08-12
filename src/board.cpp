@@ -246,7 +246,7 @@ void Board::PrintBoard(uint64 pieces)
         else if (IsBlackRook(piece))   pieceBuf[file][rank] = 'r';
         else if (IsBlackBishop(piece)) pieceBuf[file][rank] = 'b';
         else if (IsBlackKnight(piece)) pieceBuf[file][rank] = 'n';
-        else if (IsBlackPawn(piece))   pieceBuf[file][rank] = 'a';
+        else if (IsBlackPawn(piece))   pieceBuf[file][rank] = 'V';
         idx++;
     }
 
@@ -441,6 +441,7 @@ void Board::GenerateRayTable()
 template<bool isWhite>
 void Board::MakeMove(const Move& move)
 {
+    m_boardState.previousMove = move;
     bool isCaptureOfNonPawn = (move.toPiece != Piece::NoPiece) &&
                               (move.toPiece != Piece::wPawn)   &&
                               (move.toPiece != Piece::bPawn);
