@@ -454,7 +454,16 @@ void Board::MakeMove(const Move& move)
     m_boardState.checkAndPinMasksValid = false;
     m_boardState.illegalKingMovesValid = false;
 
-    m_boardState.numPieceArr[move.toPiece] -= 1;
+    if (move.toPiece != Piece::NoPiece)
+    {
+        m_boardState.numPieceArr[move.toPiece] -= 1;
+
+        // Subtract the value of the piece that was captured
+        m_boardState.pieceValueScore -= PieceValueArray[move.toPiece];
+
+        // %6 because we only want this going down, subtracting negative would increase it.
+        m_boardState.totalMaterialValue -= PieceValueArray[move.toPiece % 6];
+    }
 
     // Take out EP zobrist
     if (m_boardState.enPassantSquare != 0ull)
@@ -615,9 +624,6 @@ void Board::MakeNormalMove(const Move& move)
     {
         m_boardState.zobristKey ^= m_ppZobristArray[move.toPiece][toIdx];
     }
-
-    // Subtract the value of the piece that was captured
-    m_boardState.pieceValueScore -= PieceValueArray[move.toPiece];
 
     m_boardState.allPieces = m_boardState.whitePieces | m_boardState.blackPieces;
 }
@@ -780,9 +786,6 @@ void Board::MakeEnPassantMove(const Move& move)
 
     m_boardState.allPieces ^= (move.fromPos | move.toPos | enemySquare);
     m_boardState.enPassantSquare = 0ull;
-
-    // Subtract the value of the piece that was captured
-    m_boardState.pieceValueScore -= PieceValueArray[enemyPawn];
 }
 
 template<bool isWhite>
@@ -872,7 +875,6 @@ void Board::MakePromotionMove(const Move& move)
     m_boardState.zobristKey ^= m_ppZobristArray[promotionPiece][toIdx];
 
     m_boardState.pieceValueScore -= PieceValueArray[move.fromPiece];
-    m_boardState.pieceValueScore -= PieceValueArray[move.toPiece];
     m_boardState.pieceValueScore += PieceValueArray[promotionPiece];
 
     UpdateCastleFlags<isWhite>(move);
@@ -968,20 +970,35 @@ void Board::ResetZobKey()
 
 void Board::ResetPieceScore()
 {
-    int32 score = 0;
+    int32 whiteMaterial = 0;
+    int32 blackMaterial = 0;
 
     for (uint32 pieceIdx = 0; pieceIdx < Piece::PieceCount; pieceIdx++)
     {
-        m_boardState.numPieceArr[pieceIdx] = PopCount(m_pieces[pieceIdx]);
+        uint64 pieces = m_pieces[pieceIdx];
+        int32 count   = PopCount(pieces);
+
+        if (IsWhite(pieces))
+        {
+            if (IsWhiteKing(pieces) == false)
+            {
+                whiteMaterial += count * PieceValueArray[pieceIdx];
+            }
+        }
+        else
+        {
+            if (IsBlackKing(pieces) == false)
+            {
+                blackMaterial += count * PieceValueArray[pieceIdx];
+            }
+        }
+
+        m_boardState.numPieceArr[pieceIdx] = count;
     }
 
-    score += QueenScore  * (PopCount(WQueen())  - PopCount(BQueen()));
-    score += RookScore   * (PopCount(WRook())   - PopCount(BRook()));
-    score += BishopScore * (PopCount(WBishop()) - PopCount(BBishop()));
-    score += KnightScore * (PopCount(WKnight()) - PopCount(BKnight()));
-    score += PawnScore   * (PopCount(WPawn())   - PopCount(BPawn()));
-
-    m_boardState.pieceValueScore = score;
+    // black material value is already negative here
+    m_boardState.pieceValueScore    = whiteMaterial + blackMaterial;
+    m_boardState.totalMaterialValue = whiteMaterial - blackMaterial;
 }
 
 // Updates last irreversable ply if our move is irreversable.  Also returns the previous ply to make
@@ -1070,7 +1087,6 @@ int32 Board::ScoreBoard()
     score += GetRookBonusScores();
     score += GetKnightBonusScores();
 
-
     int32 whiteMobilityScore = GeneralMobilityScore * (PopCount(GetWhitePieces() & whiteMoves));
     int32 blackMobilityScore = GeneralMobilityScore * (PopCount(GetBlackPieces() & blackMoves));
 
@@ -1128,6 +1144,16 @@ int32 Board::GetKingSafteyScore(uint64 whiteSeenSquares, uint64 blackSeenSquares
 
 int32 Board::GetPawnBonusScores()
 {
+    int32 endMultiplier   = 1;
+    int32 earlyMultiplier = 2;
+    // This might need to be tweaked, but it should be an threshold
+    const bool isEndGame = m_boardState.totalMaterialValue < ((QueenScore + RookScore) * 2);
+    if (isEndGame)
+    {
+        endMultiplier   = 2;
+        earlyMultiplier = 1;
+    }
+
     int32 whiteScore = 0;
     uint64 whitePawns = GetPawn<true>();
     uint64 whitePawnsDefendingPawns = (MoveUpRight(whitePawns) | (MoveUpLeft(whitePawns))) & whitePawns;
@@ -1144,6 +1170,9 @@ int32 Board::GetPawnBonusScores()
     blackScore += PawnChainScore   * PopCount(blackPawnsDefendingPawns);
     blackScore += DoubledPawnScore * PopCount(blackDoubledPawns);
 
+    whiteScore *= earlyMultiplier;
+    blackScore *= earlyMultiplier;
+
     uint64 whitePawnKillMask = whitePawns | MoveLeft(whitePawns) | MoveRight(whitePawns);
     uint64 blackPawnKillMask = blackPawns | MoveLeft(blackPawns) | MoveRight(blackPawns);
 
@@ -1156,27 +1185,36 @@ int32 Board::GetPawnBonusScores()
         blackPassedPawns = MoveDown(blackPassedPawns) & ~whitePawnKillMask;
     }
 
+
+    int32 whiteEndScore = 0;
+    int32 blackEndScore = 0;
     if (whitePassedPawns != 0ull)
     {
-        whiteScore += FarPassedPawnScore   * PopCount(whitePassedPawns & (Rank2 | Rank3));
-        whiteScore += MidPassedPawnScore   * PopCount(whitePassedPawns & (Rank4 | Rank5));
-        whiteScore += ClosePassedPawnScore * PopCount(whitePassedPawns & (Rank6 | Rank7));
+        whiteEndScore += FarPassedPawnScore   * PopCount(whitePassedPawns & (Rank2 | Rank3));
+        whiteEndScore += MidPassedPawnScore   * PopCount(whitePassedPawns & (Rank4 | Rank5));
+        whiteEndScore += ClosePassedPawnScore * PopCount(whitePassedPawns & (Rank6 | Rank7));
 
     }
     if (blackPassedPawns != 0ull)
     {
-        blackScore += FarPassedPawnScore   * PopCount(blackPassedPawns & (Rank7 | Rank6));
-        blackScore += MidPassedPawnScore   * PopCount(blackPassedPawns & (Rank5 | Rank4));
-        blackScore += ClosePassedPawnScore * PopCount(blackPassedPawns & (Rank3 | Rank2));
+        blackEndScore += FarPassedPawnScore   * PopCount(blackPassedPawns & (Rank7 | Rank6));
+        blackEndScore += MidPassedPawnScore   * PopCount(blackPassedPawns & (Rank5 | Rank4));
+        blackEndScore += ClosePassedPawnScore * PopCount(blackPassedPawns & (Rank3 | Rank2));
     }
 
-    whiteScore += FarPawnAdvanceScore  * PopCount(whitePawns & (Rank2 | Rank3));
-    whiteScore += MidPawnAdvanceScore  * PopCount(whitePawns & (Rank4 | Rank5));
-    whiteScore += ClosePassedPawnScore * PopCount(whitePawns & (Rank6 | Rank7));
+    whiteEndScore += FarPawnAdvanceScore   * PopCount(whitePawns & (Rank2 | Rank3));
+    whiteEndScore += MidPawnAdvanceScore   * PopCount(whitePawns & (Rank4 | Rank5));
+    whiteEndScore += ClosePawnAdvanceScore * PopCount(whitePawns & (Rank6 | Rank7));
 
-    blackScore += FarPawnAdvanceScore  * PopCount(blackPawns & (Rank7 | Rank6));
-    blackScore += MidPawnAdvanceScore  * PopCount(blackPawns & (Rank5 | Rank4));
-    blackScore += ClosePassedPawnScore * PopCount(blackPawns & (Rank3 | Rank2));
+    blackEndScore += FarPawnAdvanceScore   * PopCount(blackPawns & (Rank7 | Rank6));
+    blackEndScore += MidPawnAdvanceScore   * PopCount(blackPawns & (Rank5 | Rank4));
+    blackEndScore += ClosePawnAdvanceScore * PopCount(blackPawns & (Rank3 | Rank2));
+
+    whiteEndScore *= endMultiplier;
+    blackEndScore *= endMultiplier;
+
+    whiteScore += whiteEndScore;
+    blackScore += blackEndScore;
 
     return whiteScore - blackScore;
 }

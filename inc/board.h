@@ -194,12 +194,13 @@ struct BoardInfo
 
     bool illegalKingMovesValid;
 
-    int32 pieceValueScore;
+    int32 pieceValueScore;      // whiteMaterial - blackMaterial
 
     uint64 lastPosMoved;
     uint64 lastPosCaptured;
 
     uint8 numPieceArr[Piece::PieceCount];
+    int32 totalMaterialValue;
 
     uint32 lastIrreversableMoveNum;
 
@@ -370,7 +371,7 @@ private:
     void GenerateRayTable();
 
     template<Piece pieceType, bool isWhite, bool hasEnPassant, bool onlyCaptures>
-    void GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pNumCapture, uint32* pNumNormal);
+    void GeneratePieceMoves(Move** ppMoveList, uint32* pNumCapture, uint32* pNumNormal, uint32* pNumProbGood);
 
     template<bool isWhite>
     uint64 GetPawnKnightKingSeenSquares();

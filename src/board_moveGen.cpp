@@ -323,9 +323,7 @@ void Board::GenerateLegalMoves(Move** ppMoveList, uint32* pNumMoves)
 {
     GenerateCheckAndPinMask<isWhite>();
 
-    Move* pCaptureList = ppMoveList[MoveTypes::Attack];
-    Move* pNormalList  = ppMoveList[MoveTypes::Normal];
-
+    uint32 numProbGood = 0;
     uint32 numCaptures = 0;
     uint32 numNormal   = 0;
 
@@ -336,16 +334,16 @@ void Board::GenerateLegalMoves(Move** ppMoveList, uint32* pNumMoves)
         // need to move this further out
         if (m_boardState.enPassantSquare != 0ull)
         {
-            GeneratePieceMoves<wPawn, isWhite, true, onlyCaptures>(pCaptureList, pNormalList, &numCaptures, &numNormal);
+            GeneratePieceMoves<wPawn, isWhite, true, onlyCaptures>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
         }
         else
         {
-            GeneratePieceMoves<wPawn,   isWhite, false, onlyCaptures>(pCaptureList, pNormalList, &numCaptures, &numNormal);
+            GeneratePieceMoves<wPawn,   isWhite, false, onlyCaptures>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
         }
-        GeneratePieceMoves<wKnight, isWhite, false, onlyCaptures>(pCaptureList, pNormalList, &numCaptures, &numNormal);
-        GeneratePieceMoves<wBishop, isWhite, false, onlyCaptures>(pCaptureList, pNormalList, &numCaptures, &numNormal);
-        GeneratePieceMoves<wRook,   isWhite, false, onlyCaptures>(pCaptureList, pNormalList, &numCaptures, &numNormal);
-        GeneratePieceMoves<wQueen,  isWhite, false, onlyCaptures>(pCaptureList, pNormalList, &numCaptures, &numNormal);
+        GeneratePieceMoves<wKnight, isWhite, false, onlyCaptures>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
+        GeneratePieceMoves<wBishop, isWhite, false, onlyCaptures>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
+        GeneratePieceMoves<wRook,   isWhite, false, onlyCaptures>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
+        GeneratePieceMoves<wQueen,  isWhite, false, onlyCaptures>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
     }
     // If we are in check, then we generate all legal moves, not only captures
     else if (m_boardState.numPiecesChecking == 1)
@@ -353,27 +351,28 @@ void Board::GenerateLegalMoves(Move** ppMoveList, uint32* pNumMoves)
         // need to move this further out
         if (m_boardState.enPassantSquare != 0ull)
         {
-            GeneratePieceMoves<wPawn, isWhite, true, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
+            GeneratePieceMoves<wPawn, isWhite, true, false>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
         }
         else
         {
-            GeneratePieceMoves<wPawn, isWhite, false, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
+            GeneratePieceMoves<wPawn, isWhite, false, false>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
         }
-        GeneratePieceMoves<wKnight, isWhite, false, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
-        GeneratePieceMoves<wBishop, isWhite, false, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
-        GeneratePieceMoves<wRook,   isWhite, false, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
-        GeneratePieceMoves<wQueen,  isWhite, false, false>(pCaptureList, pNormalList, &numCaptures, &numNormal);
+        GeneratePieceMoves<wKnight, isWhite, false, false>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
+        GeneratePieceMoves<wBishop, isWhite, false, false>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
+        GeneratePieceMoves<wRook,   isWhite, false, false>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
+        GeneratePieceMoves<wQueen,  isWhite, false, false>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
     }
 
-    GeneratePieceMoves<wKing, isWhite, false, onlyCaptures>(pCaptureList, pNormalList, &numCaptures, &numNormal);
+    GeneratePieceMoves<wKing, isWhite, false, onlyCaptures>(ppMoveList, &numCaptures, &numNormal, &numProbGood);
 
-    ppMoveList[MoveTypes::Best][0].fromPiece             = Piece::EndOfMoveList;
-    ppMoveList[MoveTypes::Attack][numCaptures].fromPiece = Piece::EndOfMoveList;
-    ppMoveList[MoveTypes::Normal][numNormal].fromPiece   = Piece::EndOfMoveList;
+    ppMoveList[MoveTypes::Best][0].fromPiece                   = Piece::EndOfMoveList;
+    ppMoveList[MoveTypes::ProbablyGood][numProbGood].fromPiece = Piece::EndOfMoveList;
+    ppMoveList[MoveTypes::Attack][numCaptures].fromPiece       = Piece::EndOfMoveList;
+    ppMoveList[MoveTypes::Normal][numNormal].fromPiece         = Piece::EndOfMoveList;
 
     if (pNumMoves != nullptr)
     {
-        *pNumMoves = numCaptures + numNormal;
+        *pNumMoves = numCaptures + numNormal + numProbGood;
     }
 }
 
@@ -385,8 +384,12 @@ template void Board::GenerateLegalMoves<false, false>(Move** ppMoveList, uint32*
 //=================================================================================================
 
 template<Piece pieceType, bool isWhite, bool hasEnPassant, bool onlyCaptures>
-void Board::GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pNumCapture, uint32* pNumNormal)
+void Board::GeneratePieceMoves(Move** ppMoveList, uint32* pNumCapture, uint32* pNumNormal, uint32* pNumProbGood)
 {
+    Move* pProbGoodList = &(ppMoveList[MoveTypes::ProbablyGood][0]);
+    Move* pCaptureList  = &(ppMoveList[MoveTypes::Attack][0]);
+    Move* pNormalList   = &(ppMoveList[MoveTypes::Normal][0]);
+
     uint64 pieces        = GetPieces<pieceType, isWhite>();
     uint64 enemySquares = (isWhite) ? m_boardState.blackPieces : m_boardState.whitePieces;
 
@@ -398,9 +401,6 @@ void Board::GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
         pieces ^= piece;
 
         uint64 moves = GetPieceMoves<pieceType, isWhite, hasEnPassant>(piece);
-
-        uint64 attacks = moves & enemySquares;
-        moves ^= attacks;
 
         // Handle en passant
         if constexpr (hasEnPassant)
@@ -420,60 +420,68 @@ void Board::GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
             }
         }
 
+        if constexpr (pieceType == wPawn)
+        {
+            constexpr uint64 promotionRow = (isWhite) ? Top : Bottom;
+
+            uint64 promotions = moves & promotionRow;
+            moves ^= promotions;
+
+            while (promotions != 0ull)
+            {
+                uint64 promotion = GetLSB(promotions);
+                promotions ^= promotion;
+
+                pProbGoodList[*pNumProbGood].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
+                pProbGoodList[*pNumProbGood].toPiece   = GetPieceFromPos<!isWhite>(promotion);
+                pProbGoodList[*pNumProbGood].fromPos   = piece;
+                pProbGoodList[*pNumProbGood].toPos     = promotion;
+                pProbGoodList[*pNumProbGood].flags     = MoveFlags::QueenPromotion;
+                pProbGoodList[*pNumProbGood].score     = ScoreMoveMVVLVA(pProbGoodList[*pNumProbGood]) + PieceScores::QueenScore;
+                *pNumProbGood += 1;
+
+                pProbGoodList[*pNumProbGood].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
+                pProbGoodList[*pNumProbGood].toPiece   = GetPieceFromPos<!isWhite>(promotion);
+                pProbGoodList[*pNumProbGood].fromPos   = piece;
+                pProbGoodList[*pNumProbGood].toPos     = promotion;
+                pProbGoodList[*pNumProbGood].flags     = MoveFlags::KnightPromotion;
+                pProbGoodList[*pNumProbGood].score     = ScoreMoveMVVLVA(pProbGoodList[*pNumProbGood]) + PieceScores::KnightScore;
+
+                *pNumProbGood += 1;
+
+                pProbGoodList[*pNumProbGood].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
+                pProbGoodList[*pNumProbGood].toPiece   = GetPieceFromPos<!isWhite>(promotion);
+                pProbGoodList[*pNumProbGood].fromPos   = piece;
+                pProbGoodList[*pNumProbGood].toPos     = promotion;
+                pProbGoodList[*pNumProbGood].flags     = MoveFlags::RookPromotion;
+                pProbGoodList[*pNumProbGood].score     = ScoreMoveMVVLVA(pProbGoodList[*pNumProbGood]) + PieceScores::RookScore;
+
+                *pNumProbGood += 1;
+
+                pProbGoodList[*pNumProbGood].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
+                pProbGoodList[*pNumProbGood].toPiece   = GetPieceFromPos<!isWhite>(promotion);
+                pProbGoodList[*pNumProbGood].fromPos   = piece;
+                pProbGoodList[*pNumProbGood].toPos     = promotion;
+                pProbGoodList[*pNumProbGood].flags     = MoveFlags::BishopPromotion;
+                pProbGoodList[*pNumProbGood].score     = ScoreMoveMVVLVA(pProbGoodList[*pNumProbGood]) + PieceScores::BishopScore;
+
+                *pNumProbGood += 1;
+            }
+        }
+
+        uint64 attacks = moves & enemySquares;
+        moves ^= attacks;
         while (attacks != 0ull)
         {
             uint64 attack = GetLSB(attacks);
             attacks ^= attack;
 
-            MoveFlags flags = MoveFlags::NoFlag;
-
-            int32 extraScore = 0;
-            // handle promotions
-            if constexpr (pieceType == wPawn)
-            {
-                uint64 promotionRow = (isWhite) ? MoveDown(Top) : MoveUp(Bottom);
-                bool isPromotion = piece & promotionRow;
-
-                if (isPromotion)
-                {
-                    pCaptureList[*pNumCapture].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
-                    pCaptureList[*pNumCapture].toPiece = GetPieceFromPos<!isWhite>(attack);
-                    pCaptureList[*pNumCapture].fromPos = piece;
-                    pCaptureList[*pNumCapture].toPos = attack;
-                    pCaptureList[*pNumCapture].flags = MoveFlags::QueenPromotion;
-                    pCaptureList[*pNumCapture].score = ScoreMoveMVVLVA(pCaptureList[*pNumCapture]) + PieceScores::QueenScore;
-                    *pNumCapture += 1;
-
-                    pCaptureList[*pNumCapture].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
-                    pCaptureList[*pNumCapture].toPiece = GetPieceFromPos<!isWhite>(attack);
-                    pCaptureList[*pNumCapture].fromPos = piece;
-                    pCaptureList[*pNumCapture].toPos = attack;
-                    pCaptureList[*pNumCapture].flags = MoveFlags::KnightPromotion;
-                    pCaptureList[*pNumCapture].score = ScoreMoveMVVLVA(pCaptureList[*pNumCapture]) + PieceScores::KnightScore;
-
-                    *pNumCapture += 1;
-
-                    pCaptureList[*pNumCapture].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
-                    pCaptureList[*pNumCapture].toPiece = GetPieceFromPos<!isWhite>(attack);
-                    pCaptureList[*pNumCapture].fromPos = piece;
-                    pCaptureList[*pNumCapture].toPos = attack;
-                    pCaptureList[*pNumCapture].flags = MoveFlags::RookPromotion;
-                    pCaptureList[*pNumCapture].score = ScoreMoveMVVLVA(pCaptureList[*pNumCapture]) + PieceScores::RookScore;
-
-                    *pNumCapture += 1;
-
-                    // let the normal insertion handle this
-                    flags = MoveFlags::BishopPromotion;
-                    extraScore = PieceScores::BishopScore;
-                }
-            }
-
             pCaptureList[*pNumCapture].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
             pCaptureList[*pNumCapture].toPiece   = GetPieceFromPos<!isWhite>(attack);
             pCaptureList[*pNumCapture].fromPos   = piece;
             pCaptureList[*pNumCapture].toPos     = attack;
-            pCaptureList[*pNumCapture].flags     = flags;
-            pCaptureList[*pNumCapture].score     = ScoreMoveMVVLVA(pCaptureList[*pNumCapture]) + extraScore;
+            pCaptureList[*pNumCapture].flags     = MoveFlags::NoFlag;
+            pCaptureList[*pNumCapture].score     = ScoreMoveMVVLVA(pCaptureList[*pNumCapture]);
 
             *pNumCapture += 1;
         }
@@ -483,32 +491,29 @@ void Board::GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
             // Handle castling
             if constexpr (pieceType == wKing)
             {
-                // Since the castle move only actually cares about the flag, we only need to fill that
-                // out.  We can also avoid branching by only conditionally incrementing the number of
-                // moves.
                 uint64 castleFlags = m_boardState.legalCastles;
 
                 uint64 flag = GetLSB(castleFlags);
                 castleFlags ^= flag;
                 if (flag != 0ull)
                 {
-                    pNormalList[*pNumNormal].flags     = flag;
-                    pNormalList[*pNumNormal].score     = CastleScore;
-                    pNormalList[*pNumNormal].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
-                    pNormalList[*pNumNormal].toPiece   = Piece::NoPiece;
-                    pNormalList[*pNumNormal].toPos     = 0ull;
-                    pNormalList[*pNumNormal].fromPos   = (isWhite) ? WhiteKingStart : BlackKingStart;
-                    *pNumNormal += 1;
+                    pProbGoodList[*pNumProbGood].flags     = flag;
+                    pProbGoodList[*pNumProbGood].score     = CastleScore;
+                    pProbGoodList[*pNumProbGood].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
+                    pProbGoodList[*pNumProbGood].toPiece   = Piece::NoPiece;
+                    pProbGoodList[*pNumProbGood].toPos     = 0ull;
+                    pProbGoodList[*pNumProbGood].fromPos   = (isWhite) ? WhiteKingStart : BlackKingStart;
+                    *pNumProbGood += 1;
 
                     if (castleFlags != 0ull)
                     {
-                        pNormalList[*pNumNormal].flags     = castleFlags;
-                        pNormalList[*pNumNormal].score     = CastleScore;
-                        pNormalList[*pNumNormal].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
-                        pNormalList[*pNumNormal].toPiece   = Piece::NoPiece;
-                        pNormalList[*pNumNormal].toPos     = 0ull;
-                        pNormalList[*pNumNormal].fromPos   = (isWhite) ? WhiteKingStart : BlackKingStart;
-                        *pNumNormal += 1;
+                        pProbGoodList[*pNumProbGood].flags     = castleFlags;
+                        pProbGoodList[*pNumProbGood].score     = CastleScore;
+                        pProbGoodList[*pNumProbGood].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
+                        pProbGoodList[*pNumProbGood].toPiece   = Piece::NoPiece;
+                        pProbGoodList[*pNumProbGood].toPos     = 0ull;
+                        pProbGoodList[*pNumProbGood].fromPos   = (isWhite) ? WhiteKingStart : BlackKingStart;
+                        *pNumProbGood += 1;
                     }
                 }
             }
@@ -518,53 +523,12 @@ void Board::GeneratePieceMoves(Move* pCaptureList, Move* pNormalList, uint32* pN
                 uint64 move = GetLSB(moves);
                 moves ^= move;
 
-                MoveFlags flags = MoveFlags::NoFlag;
-
-                int32 extraScore = 0;
-                // handle promotions
-                if constexpr (pieceType == wPawn)
-                {
-                    uint64 promotionRow = (isWhite) ? MoveDown(Top) : MoveUp(Bottom);
-                    bool isPromotion = piece & promotionRow;
-
-                    if (isPromotion)
-                    {
-                        pNormalList[*pNumNormal].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
-                        pNormalList[*pNumNormal].toPiece   = Piece::NoPiece;
-                        pNormalList[*pNumNormal].fromPos   = piece;
-                        pNormalList[*pNumNormal].toPos     = move;
-                        pNormalList[*pNumNormal].flags     = MoveFlags::QueenPromotion;
-                        pNormalList[*pNumNormal].score     = PieceScores::QueenScore;
-                        *pNumNormal += 1;
-
-                        pNormalList[*pNumNormal].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
-                        pNormalList[*pNumNormal].toPiece   = Piece::NoPiece;
-                        pNormalList[*pNumNormal].fromPos   = piece;
-                        pNormalList[*pNumNormal].toPos     = move;
-                        pNormalList[*pNumNormal].flags     = MoveFlags::KnightPromotion;
-                        pNormalList[*pNumNormal].score     = PieceScores::KnightScore;
-                        *pNumNormal += 1;
-
-                        pNormalList[*pNumNormal].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
-                        pNormalList[*pNumNormal].toPiece   = Piece::NoPiece;
-                        pNormalList[*pNumNormal].fromPos   = piece;
-                        pNormalList[*pNumNormal].toPos     = move;
-                        pNormalList[*pNumNormal].flags     = MoveFlags::RookPromotion;
-                        pNormalList[*pNumNormal].score     = PieceScores::RookScore;
-                        *pNumNormal += 1;
-
-                        // let the normal insertion handle this
-                        flags      = MoveFlags::BishopPromotion;
-                        extraScore = PieceScores::BishopScore;
-                    }
-                }
-
                 pNormalList[*pNumNormal].fromPiece = static_cast<Piece>(pieceType + pieceTypeOffset);
                 pNormalList[*pNumNormal].toPiece   = Piece::NoPiece;
                 pNormalList[*pNumNormal].fromPos   = piece;
                 pNormalList[*pNumNormal].toPos     = move;
-                pNormalList[*pNumNormal].flags     = flags;
-                pNormalList[*pNumNormal].score     = extraScore;
+                pNormalList[*pNumNormal].flags     = MoveFlags::NoFlag;
+                pNormalList[*pNumNormal].score     = 0;
                 *pNumNormal += 1;
             }
         }

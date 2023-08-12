@@ -691,7 +691,10 @@ int32 ChessEngine::Negmax(
             bestScore      = moveScore;
         }
 
-        settings.onPv = false;
+        if (onPlyZero == false)
+        {
+            settings.onPv = false;
+        }
 
         if (bestScore > alpha)
         {
@@ -726,6 +729,7 @@ int32 ChessEngine::Negmax(
         bestMove.fromPos = 0ull;
         bestMove.toPos   = 0ull;
         bestMove.score   = 0;
+        bestScore        = 0;
         if (0 > alpha)
         {
             ttScoreType  = TTScoreType::Exact;
@@ -1002,7 +1006,15 @@ Move ChessEngine::GetNextMove(Move** ppMoveList, GetNextMoveData* pData, const S
         switch (pData->moveType)
         {
             case(MoveTypes::Best):
-                // Sort Attacking moves as needed
+                // Sort moves as needed
+                if (pData->sortedProbGood == false)
+                {
+                    SortMoves(&(ppMoveList[MoveTypes::ProbablyGood][0]), settings);
+                }
+                pData->moveType = MoveTypes::ProbablyGood;
+                break;
+            case(MoveTypes::ProbablyGood):
+                // Sort moves as needed
                 if (pData->sortedAttacks == false)
                 {
                     SortMoves(&(ppMoveList[MoveTypes::Attack][0]), settings);
@@ -1054,9 +1066,10 @@ Move ChessEngine::GetNextMove(Move** ppMoveList, GetNextMoveData* pData, const S
 GetNextMoveData InitGetNextMoveData()
 {
     GetNextMoveData data = {};
-    data.moveIdx       = 0;
-    data.moveIdx       = MoveTypes::Best;
-    data.sortedAttacks = false;
+    data.moveIdx        = 0;
+    data.moveIdx        = MoveTypes::Best;
+    data.sortedAttacks  = false;
+    data.sortedProbGood = false;
 
     return data;
 }

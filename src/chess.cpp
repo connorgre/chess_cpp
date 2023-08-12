@@ -131,8 +131,8 @@ void ChessGame::DoCompareEngines(EngineSettings whiteEngine, EngineSettings blac
 
     auto startTime = std::chrono::steady_clock::now();
 
-    // set a time limit enough for 50 moves per team
-    TimeType timeLimit       = whiteEngine.time * 100;
+    // run for 1 minute at a time
+    TimeType timeLimit       = TimeType(60000);
     TimeType elapsedTime     = TimeType(0);
     TimeType prevElapsedTime = TimeType(0);
 
@@ -798,6 +798,11 @@ Result ChessGame::ParseResetCommand(
         {
             // stockfish says -.4 f5f7
             char fenStr[] = "2kr2r1/ppp4p/2npb2b/5q2/4pP1P/3P2N1/PPPB4/2KRQB1R b - - 2 18";
+            memcpy(pInputCommand->reset.fenStr, fenStr, sizeof(fenStr));
+        }
+        else if (wordVec[1] == "6")
+        {
+            char fenStr[] = "7K/8/8/8/8/8/4Q3/k7 w - -";
             memcpy(pInputCommand->reset.fenStr, fenStr, sizeof(fenStr));
         }
         else if ((wordVec[1] == "tt") || (wordVec[1] == "transtable"))

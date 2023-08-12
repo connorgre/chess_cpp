@@ -43,6 +43,7 @@ struct GetNextMoveData
     uint32    moveIdx;
     MoveTypes moveType;
     bool      sortedAttacks;
+    bool      sortedProbGood;
 };
 
 struct SearchSettings
