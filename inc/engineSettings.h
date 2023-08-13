@@ -46,6 +46,10 @@ static void SetupInitialSearchSettings(SearchSettings* pSettings)
 
     pSettings->doDeltaPruning         = true;
     pSettings->deltaPruningVal        = 2 * PieceScores::PawnScore;
+
+    pSettings->doNullMoveReduction      = true;
+    pSettings->nullReductionSearchDepth = 4;
+    pSettings->nullReductionDepth       = 1;
 }
 
 enum EngineFlags : uint64
@@ -75,12 +79,17 @@ enum EngineFlags : uint64
     NoDeltaPrune                 = 1 << 25,
     StrongDeltaPrune             = 1 << 26,
 
+    NoNullReduction              = 1 << 27,
+    StrongNullReduction          = 1 << 28,
+
     Default         =   0,
     NoPrune         =   NoLateMovePrune         |
                         NoMultiCut              |
                         NoNullMove              |
                         NoFutilityPrune         |
-                        NoExtendedFutilityPrune,
+                        NoExtendedFutilityPrune |
+                        NoDeltaPrune            |
+                        NoNullReduction,
 
     WeakPrune       =   WeakLateMovePrune         |
                         WeakMultiCut              |
@@ -92,7 +101,9 @@ enum EngineFlags : uint64
                         StrongMultiCut              |
                         StrongNullMove              |
                         StrongFutilityPrune         |
-                        StrongExtendedFutilityPrune,
+                        StrongExtendedFutilityPrune |
+                        StrongDeltaPrune            |
+                        StrongNullReduction,
 
     NoEnhancements   =  NoPrune          |
                         NoKiller         |
@@ -132,6 +143,7 @@ static EngineFlags GetFlagFromString(std::string flagStr)
     flagMap["limitqsearch"]                = EngineFlags::LimitQSearch;
     flagMap["nodeltaprune"]                = EngineFlags::NoDeltaPrune;
     flagMap["strongdeltaprune"]            = EngineFlags::StrongDeltaPrune;
+    flagMap["nonullreduction"]             = EngineFlags::NoNullReduction;
 
     // Check if the value exists in the map
     EngineFlags flag = EngineFlags::ErrorFlag;
@@ -234,6 +246,16 @@ static SearchSettings GetSearchSetting(EngineFlags flags)
     if (IsFlagSet(flags, StrongDeltaPrune))
     {
         settings.deltaPruningVal = 3 * PawnScore;
+    }
+
+    if (IsFlagSet(flags, NoNullReduction))
+    {
+        settings.doNullMoveReduction = false;
+    }
+    
+    if (IsFlagSet(flags, StrongNullReduction))
+    {
+        settings.nullReductionDepth = 3;
     }
 
     return settings;

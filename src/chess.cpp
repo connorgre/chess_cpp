@@ -42,6 +42,7 @@ void ChessGame::Run()
     bool running = true;
     while(running)
     {
+        std::cin.clear();
         std::cout << ">> " << std::flush;
         std::string inputLine;
         std::getline(std::cin, inputLine);
@@ -229,8 +230,6 @@ void ChessGame::DoCompareEngines(EngineSettings whiteEngine, EngineSettings blac
             lastPrintTime = elapsedTime;
         }
 
-        // don't let the engines use each others TT
-        m_engine.ResetTransTable();
         m_engine.ResetKillers();
 
         std::string moveStr   = m_board.GetStringFromMove(curMove);

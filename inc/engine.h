@@ -68,22 +68,22 @@ struct SearchSettings
 
     bool   futilityPrune;           //> Skip to qSearch when we are down by more than a 
                                     //  futilityCutoff on depth 1
-    uint32 futilityCutoff;          //> Futility value to cutoff with (knight value)
+    int32 futilityCutoff;          //> Futility value to cutoff with (knight value)
 
     bool   extendedFutilityPrune;   //> Skip to qSearch when we are down by more than
                                     //  extendedFutilityCutoff on depth 2
-    uint32 extendedFutilityCutoff;  //> Extended futility value to cutoff with (rook value)
+    int32 extendedFutilityCutoff;  //> Extended futility value to cutoff with (rook value)
 
     bool   multiCutPrune;           //> Do a reduced depth search on the first multiCutMoves, if
-    uint32 multiCutMoves;           //  the number of beta cutoffs >= multiCutThreshold, then
-    uint32 multiCutThreshold;       //  return beta
-    uint32 multiCutDepth;
+    int32 multiCutMoves;           //  the number of beta cutoffs >= multiCutThreshold, then
+    int32 multiCutThreshold;       //  return beta
+    int32 multiCutDepth;
 
     bool   lateMoveReduction;       //> If none of the first numLateMovesSub beat alpha, then
-    uint32 numLateMovesSub;         //  subtract lateMoveSub from depth.  If none of the first
-    uint32 numLateMovesDiv;         //  numLateMovesDiv beat alpha, then divide depth by
-    uint32 lateMoveSub;             //  lateMoveDiv
-    uint32 lateMoveDiv;
+    int32 numLateMovesSub;         //  subtract lateMoveSub from depth.  If none of the first
+    int32 numLateMovesDiv;         //  numLateMovesDiv beat alpha, then divide depth by
+    int32 lateMoveSub;             //  lateMoveDiv
+    int32 lateMoveDiv;
 
     bool   searchReCaptureFirst;    //> Always put re-captures as the best move
 
@@ -91,10 +91,14 @@ struct SearchSettings
 
     bool   doCheckExtension;        //> Increase depth by 1 if we're in check.
 
-    uint32 quiescenceDepthLimit;    //> limit the depth quiescence search can go to.
+    int32 quiescenceDepthLimit;    //> limit the depth quiescence search can go to.
 
     bool   doDeltaPruning;          //> don't bother continuing qsearch if move doesn't improve our
-    uint32 deltaPruningVal;         //  score by at least deltaPruningVal
+    int32 deltaPruningVal;         //  score by at least deltaPruningVal
+
+    bool  doNullMoveReduction;      //> This is different than null move pruning.  What this does
+    int32 nullReductionDepth;       //  is decrease the rest of the search depth if a very reduced
+    int32 nullReductionSearchDepth; //  depth null move search leads to a beta cutoff.
 };
 
 typedef std::chrono::milliseconds TimeType;
@@ -135,7 +139,7 @@ public:
 
     template<bool isWhite, bool onPlyZero>
     int32 Negmax(int32              depth,
-                 uint32             ply,
+                 int32              ply,
                  Move*              bestMove,
                  int32              alpha,
                  int32              beta,
@@ -143,15 +147,16 @@ public:
                  std::atomic<bool>& isTimedOut);
 
     template<bool isWhite>
-    int32 QuiscenceSearch(uint32             ply, 
+    int32 QuiscenceSearch(int32              ply, 
                           int32              alpha,
                           int32              beta,
                           SearchSettings     settings,
                           std::atomic<bool>& isTimedOut,
-                          uint32             maxFreePly,
+                          int32              maxFreePly,
                           uint64             movedPieces=0ull);
 
-    void ResetTransTable() { m_mainSearchTransTable.ResetTable(); m_qSearchTransTable.ResetTable(); }
+    void ResetTransTable() { m_engineMainTTs[0].ResetTable(); m_engineMainTTs[1].ResetTable();
+                          m_engineQSearchTTs[0].ResetTable(); m_engineQSearchTTs[1].ResetTable(); }
 
     std::string ConvertScoreToStr(int32 score, int32* pCheckMateDepth = nullptr);
 
@@ -170,8 +175,12 @@ private:
     void InsertKillerMove(const Move& move, uint32 ply);
     void InsertCounterMove(const Move& move);
 
-    TranspositionTable m_mainSearchTransTable;
-    TranspositionTable m_qSearchTransTable;
+    TranspositionTable m_engineMainTTs[2];
+    TranspositionTable m_engineQSearchTTs[2];
+
+    TranspositionTable* m_pMainSearchTransTable;
+    TranspositionTable* m_pQSearchTransTable;
+
     Board*  m_pBoard;
     Move*** m_pppMoveLists;
 
@@ -194,6 +203,7 @@ private:
         uint64  numKillerMoves;
         uint64  drawsDetected;
         uint64  killersIllegal;
+        uint64  numNullReductions;
     } m_searchValues;
 
     bool IsMoveGoodForQsearch(

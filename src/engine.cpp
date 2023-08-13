@@ -11,7 +11,11 @@ ChessEngine::ChessEngine()
 m_pBoard(nullptr),
 m_pppMoveLists(nullptr),
 m_searchValues({}),
-m_counterMoveTable()
+m_counterMoveTable(),
+m_pMainSearchTransTable(nullptr),
+m_pQSearchTransTable(nullptr),
+m_engineMainTTs(),
+m_engineQSearchTTs()
 {
 
 }
@@ -55,8 +59,15 @@ void ChessEngine::Init(Board* pBoard)
             m_pppMoveLists[i][Normal][j].fromPiece = Piece::EndOfMoveList;
         }
     }
-    m_mainSearchTransTable.Init(MainTransTableSize);
-    m_qSearchTransTable.Init(QSearchTransTableSize);
+
+    m_engineMainTTs[0].Init(MainTransTableSize);
+    m_engineMainTTs[1].Init(MainTransTableSize);
+
+    m_engineQSearchTTs[0].Init(QSearchTransTableSize);
+    m_engineQSearchTTs[1].Init(QSearchTransTableSize);
+
+    m_pMainSearchTransTable = &(m_engineMainTTs[0]);
+    m_pQSearchTransTable    = &(m_engineQSearchTTs[0]);
 }
 
 void ChessEngine::Destroy()
@@ -72,8 +83,11 @@ void ChessEngine::Destroy()
     delete[] m_pppMoveLists;
 
     m_pppMoveLists = nullptr;
-    m_mainSearchTransTable.Destroy();
-    m_qSearchTransTable.Destroy();
+
+    m_engineMainTTs[0].Destroy();
+    m_engineMainTTs[1].Destroy();
+    m_engineQSearchTTs[0].Destroy();
+    m_engineQSearchTTs[1].Destroy();
 }
 
 Move ChessEngine::DoEngine(EngineSettings     settings,
@@ -92,6 +106,8 @@ Move ChessEngine::DoEngine(EngineSettings     settings,
     // Make a null move to trade turns to keep the board state consistent
     if (settings.isWhite)
     {
+        m_pMainSearchTransTable = &(m_engineMainTTs[0]);
+        m_pQSearchTransTable    = &(m_engineQSearchTTs[0]);
         if (m_pBoard->GetBoardStateIsWhiteTurn() == false)
         {
             std::cout << "Making null move to switch team (black->white)" << std::endl;
@@ -100,6 +116,9 @@ Move ChessEngine::DoEngine(EngineSettings     settings,
     }
     else
     {
+        m_pMainSearchTransTable = &(m_engineMainTTs[1]);
+        m_pQSearchTransTable = &(m_engineQSearchTTs[1]);
+
         if (m_pBoard->GetBoardStateIsWhiteTurn() == true)
         {
             std::cout << "Making null move to switch team (white->black)" << std::endl;
@@ -115,7 +134,7 @@ Move ChessEngine::DoEngine(EngineSettings     settings,
                                             settings.searchSettings,
                                             isTimedOut,
                                             &maxDepth);
-        
+
         isMoveLegal = m_pBoard->IsMoveLegal<true, true>(bestMove);
         if (settings.doMove && isMoveLegal)
         {
@@ -172,6 +191,7 @@ Move ChessEngine::DoEngine(EngineSettings     settings,
         std::cout << "TransTable hits       : " << m_searchValues.mainTransTableHits  << std::endl;
         std::cout << "QSearch TT hits       : " << m_searchValues.qTransTableHits     << std::endl;
         std::cout << "Null Move Prunes      : " << m_searchValues.nullMoveCutoffs     << std::endl;
+        std::cout << "Null Move Reductions  : " << m_searchValues.numNullReductions   << std::endl;
         std::cout << "Futility Prunes       : " << m_searchValues.futilityCutoffs     << std::endl;
         std::cout << "Extended Fut. Prunes  : " << m_searchValues.extendedFutilityCutoffs << std::endl;
         std::cout << "MultiCut Prunes       : " << m_searchValues.multiCutCutoffs     << std::endl;
@@ -413,7 +433,7 @@ Move ChessEngine::IterativeDeepening(
 template<bool isWhite, bool onPlyZero>
 int32 ChessEngine::Negmax(
     int32              depth,
-    uint32             ply,
+    int32              ply,
     Move*              pBestMove,
     int32              alpha,
     int32              beta,
@@ -442,7 +462,7 @@ int32 ChessEngine::Negmax(
 
             pBestMove->score   = 0;
         }
-        return 0;
+        return PieceScores::KnightScore * -1;   // otherwise it just draws half the time
     }
 
     if constexpr (onPlyZero)
@@ -461,7 +481,7 @@ int32 ChessEngine::Negmax(
     // Prefetch the TT before generating the check and pin masks.  Prefetching the TT data make
     // the engine ~10% faster.
     uint64 zobKey = m_pBoard->GetZobKey();
-    m_mainSearchTransTable.PrefetchEntry(zobKey);
+    m_pMainSearchTransTable->PrefetchEntry(zobKey);
 
     settings.expectedCutNode = !settings.expectedCutNode;
     if (settings.onPv)
@@ -477,7 +497,7 @@ int32 ChessEngine::Negmax(
     TTScoreType ttScoreType = TTScoreType::LowerBound;
     bool ttMoveValid = false;
     Move ttMove = {};
-    ttMove = m_mainSearchTransTable.ProbeTable(zobKey, depth, alpha, beta);
+    ttMove = m_pMainSearchTransTable->ProbeTable(zobKey, depth, alpha, beta);
 
     ttMoveValid = ttMove.score != TTScoreNotFound;
     if (ttMoveValid)
@@ -537,15 +557,57 @@ int32 ChessEngine::Negmax(
     m_pBoard->CopyBoardData(&prevBoardData);
     m_pBoard->CopyPieceData(&(prevBoardPieces[0]));
 
+    // If we can do a NullMoveReduction
+    const bool canDoNullMoveReduction = (settings.doNullMoveReduction)  &&
+                                        (settings.onPv == false)        &&
+                                        (inCheck == false);
+    int32 nullReductionVal = 0;
+    if (canDoNullMoveReduction)
+    {
+        int32 nullMoveScore = 0;
+
+        // don't do qsearch when testing for null move reduction
+        int32 origQSearchLimit = settings.quiescenceDepthLimit;
+        settings.quiescenceDepthLimit = 0;
+
+        int32 nullMoveSearchDepth = depth - settings.nullReductionSearchDepth;
+
+        settings.doNullMoveReduction = false;
+        m_pBoard->MakeNullMove<isWhite>();
+        nullMoveScore = Negmax<!isWhite, false>(nullMoveSearchDepth,
+                                                ply + 1,
+                                                nullptr,
+                                                0 - beta,
+                                                1 - beta,
+                                                settings,
+                                                isTimedOut);
+        nullMoveScore *= -1;
+        m_pBoard->UndoMove(&prevBoardData, &(prevBoardPieces[0]));
+
+        settings.quiescenceDepthLimit = origQSearchLimit;
+        settings.doNullMoveReduction = true;
+        if (nullMoveScore >= beta)
+        {
+            m_searchValues.numNullReductions++;
+            nullReductionVal = settings.nullReductionDepth;
+        }
+    }
+
     // If we can do a NullMoveSearch
     const bool canNullPrune = (settings.nullMovePrune)             &&
                               (settings.onPv == false)             &&
-                              (inCheck == false);
+                              (inCheck == false)                   &&
+                              ((canDoNullMoveReduction == false) || (nullReductionVal != 0)); 
+                                                      // no point in trying to null prune if the
+                                                      // null reduction failed at a shallower depth
 
     if (canNullPrune)
     {
         int32 nullMoveScore = 0;
         settings.nullMovePrune = false;
+        // don't do qsearch when testing for null move reduction
+        int32 origQSearchLimit = settings.quiescenceDepthLimit;
+        settings.quiescenceDepthLimit = 0;
 
         int32 nullMoveSearchDepth = depth - settings.nullMoveDepth;
 
@@ -566,6 +628,7 @@ int32 ChessEngine::Negmax(
             return beta;
         }
 
+        settings.quiescenceDepthLimit = origQSearchLimit;
         settings.nullMovePrune = true;
     }
 
@@ -639,7 +702,7 @@ int32 ChessEngine::Negmax(
                                         (inCheck == false);
 
     uint32 numMoves = 0;
-    int32 searchDepth = depth - 1;
+    int32 searchDepth = (depth - nullReductionVal) - 1;
 
     int32 searchBeta = beta;
     bool doNullWindowSearch = false;
@@ -653,22 +716,18 @@ int32 ChessEngine::Negmax(
             {
                 if (numMoves > settings.numLateMovesDiv)
                 {
-                    searchDepth = depth / settings.lateMoveDiv;
+                    searchDepth = ((depth - nullReductionVal) - 1) / settings.lateMoveDiv;
                     m_searchValues.lateMoveReductions++;
                 }
                 else if (numMoves > settings.numLateMovesSub)
                 {
-                    searchDepth = depth - settings.lateMoveSub;
+                    searchDepth = ((depth - nullReductionVal) - 1) - settings.lateMoveSub;
                     m_searchValues.lateMoveReductions++;
-                }
-                else
-                {
-                    searchDepth = depth - 1;
                 }
             }
             else
             {
-                searchDepth = depth - 1;
+                searchDepth = ((depth - nullReductionVal) - 1);
             }
         }
 
@@ -712,7 +771,7 @@ int32 ChessEngine::Negmax(
             bestScore      = moveScore;
         }
 
-        if (onPlyZero == false)
+        //if (onPlyZero == false)
         {
             settings.onPv = false;
         }
@@ -767,19 +826,19 @@ int32 ChessEngine::Negmax(
         *pBestMove = bestMove;
     }
 
-    m_mainSearchTransTable.InsertToTable(m_pBoard->GetZobKey(), depth, bestMove, ttScoreType);
+    m_pMainSearchTransTable->InsertToTable(m_pBoard->GetZobKey(), depth, bestMove, ttScoreType);
 
     return bestScore;
 }
 
 template<bool isWhite>
 int32 ChessEngine::QuiscenceSearch(
-    uint32             ply,
+    int32              ply,
     int32              alpha,
     int32              beta,
     SearchSettings     settings,
     std::atomic<bool>& isTimedOut,
-    uint32             maxFreePly,
+    int32              maxFreePly,
     uint64             movedPieces)
 {
     if (isTimedOut.load(std::memory_order_relaxed) == true)
@@ -798,6 +857,11 @@ int32 ChessEngine::QuiscenceSearch(
         return standPatScore;
     }
 
+    if ((ply >= maxFreePly) && (movedPieces == 0ull))
+    {
+        return standPatScore;
+    }
+
     // No point in continuing if either of these are true.
     if (standPatScore >= beta)
     {
@@ -810,11 +874,11 @@ int32 ChessEngine::QuiscenceSearch(
         return alpha;
     }
 
-    m_qSearchTransTable.PrefetchEntry(m_pBoard->GetZobKey());
+    m_pQSearchTransTable->PrefetchEntry(m_pBoard->GetZobKey());
     m_pBoard->GenerateCheckAndPinMask<isWhite>();
 
     TTScoreType ttScoreType = TTScoreType::LowerBound;
-    Move ttMove = m_qSearchTransTable.ProbeTable(m_pBoard->GetZobKey(), 0, alpha, beta);
+    Move ttMove = m_pQSearchTransTable->ProbeTable(m_pBoard->GetZobKey(), 0, alpha, beta);
 
     bool ttMoveValid = ttMove.score != TTScoreNotFound;
     if (ttMoveValid)
@@ -917,7 +981,7 @@ int32 ChessEngine::QuiscenceSearch(
 
     if (didMove)
     {
-        m_qSearchTransTable.InsertToTable(m_pBoard->GetZobKey(), 0, bestMove, ttScoreType);
+        m_pQSearchTransTable->InsertToTable(m_pBoard->GetZobKey(), 0, bestMove, ttScoreType);
     }
     else if (inCheck)
     {
